@@ -50,23 +50,42 @@ Someone **integrating** a JS/TS app additionally needs Node only if they choose 
 
 ## 1. Problem & goals
 
-Anyone self-hosting a Claude API app has no lightweight way to watch spend without either
-(a) manually checking console.anthropic.com, or (b) adopting a hosted observability platform
-(Langfuse, Helicone, Portkey) that wants an account and sends your usage data to their servers.
-Those platforms are good at what they do, but none of them target "I just want a dashboard on
-my own machine, zero account, docker run and done."
+Anyone self-hosting a Claude API app has no lightweight way to *control* spend — not just watch
+it — without either (a) manually checking console.anthropic.com, or (b) adopting a hosted
+observability platform (Langfuse, Helicone, Portkey) built around logs and traces, where cost is
+a side effect of tracing rather than the product's center of gravity. Those platforms are good
+at what they do, but none of them target "I want a budget policy and a control panel on my own
+machine, zero account, docker run and done."
+
+**Positioning, made explicit (a real correction found in review, not a cosmetic rename):**
+SpendGaugeAI is **AI FinOps for self-hosted developers**, not a usage-log viewer. The
+distinction matters beyond marketing copy — it's the test every future feature and every pixel
+of UI gets held against: does this help someone *set and enforce a budget policy* (FinOps), or
+does it just *display what happened* (logging)? The engine already leans the right way — credit
+balance, alert thresholds, burn rate, runway forecasting are financial control primitives, not
+passive accounting — but this was found to be under-stated in the project's own prior framing
+("cost tracker," "dashboard") in a way the actual instrument-panel/gauge UI concept (§8) had
+already outgrown. Docs corrected; **the UI must read as a financial control center, not a
+settings page** — see the explicit principle in the Goals list below.
 
 SpendGaugeAI fills that gap: a small, self-hosted, pip-installable service that any Claude API
-app reports token usage to over HTTP, with a real dashboard, credit/burn-rate tracking, and
-optional Discord alerts. The engine (accounting math, credit tracking, alert logic) is not new —
-it's a proven extraction from the MCP Learning Project's `/usage` dashboard, which has already
-caught real billing bugs against real invoices (see that project's `INSIGHTS.md` #33, #37).
+app reports token usage to over HTTP, with a real budget-control panel, credit/burn-rate
+tracking, and optional Discord alerts enforcing the policy you set. The engine (accounting math,
+credit tracking, alert logic) is not new — it's a proven extraction from the MCP Learning
+Project's `/usage` dashboard, which has already caught real billing bugs against real invoices
+(see that project's `INSIGHTS.md` #33, #37).
 
 **Goals for v1:**
-- A client app can report usage with one HTTP call and see it on a dashboard within seconds.
+- A client app can report usage with one HTTP call and see it reflected in the budget control
+  panel within seconds.
 - Runs with zero external account — `pip install spendgaugeai && spendgaugeai serve`, or Docker.
 - Cost math lives in one place (server-side), so pricing corrections happen once, not per-client.
-- The UI is a genuine, considered design — not a functional-but-plain admin panel.
+- **The UI reads as a financial control center, not a settings page or a log viewer.** Lead with
+  status and policy (the hero gauge, burn rate, runway, budget threshold), not raw event lists.
+  Configuration (starting balance, alert threshold) is *setting policy*, and should be worded
+  and weighted like a financial control, not a generic form — this governs copy choices (§8's
+  "Configure" panel labels) as much as layout, and applies to every future page (§1's planned
+  2-3 additions), not just `/usage`.
 - **Language-independent integration.** The audience is "anyone building a Claude API app," not
   "anyone building one in Python." The HTTP contract (§4) is the actual product interface;
   Python and JS/TS get official SDKs in v1 (§8a), any other language integrates against the
@@ -451,6 +470,15 @@ source dashboard's always-visible form — starting balance, alert threshold, th
 tracking checkbox (with its confirm-before-reset framing preserved), and the previous-period
 note. Collapsed by default so the polished gauge isn't cluttered by raw inputs on every load,
 since these are rarely-touched settings.
+
+**Copy in this panel is policy language, not a generic settings form** — the concrete
+application of §1's "control center, not a settings page" principle. "Starting balance" reads
+as a budget being set, not a number being entered; the reset checkbox's existing
+confirm-before-reset framing already does this correctly (it explains a consequence, not just a
+toggle) — that same standard extends to every label in the panel, not just the one that already
+had it. Small wording difference, same principle as the hero gauge itself: the whole page should
+feel like operating a financial instrument, not filling out a form that happens to be about
+money.
 
 ## 8a. Client integration — language-independent by design
 

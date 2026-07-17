@@ -14,10 +14,16 @@ than letting it silently drift out of date.
 
 ## What this project is
 
-SpendGaugeAI is a standalone, self-hosted, pip-installable Claude API cost tracker — extracted
-from the MCP Learning Project's proven `/usage` dashboard
-(`c:\Users\vijay\OneDrive\Desktop\Claude Workspace\MCP Project\src\backend\database.py` /
-`api.py`). It is a **separate product in a separate repo**, not a subfolder of that project.
+SpendGaugeAI is **AI FinOps for self-hosted developers** — a budget control center for Claude
+API spend, not a usage-log viewer. That distinction is a first-class design principle (§1 of
+`docs/DESIGN.md`), not marketing framing: every feature and every piece of UI copy gets held
+against "does this help set/enforce a budget policy" vs. "does this just display what
+happened." Don't describe this project as a "cost tracker" or "dashboard" in new docs/copy —
+those words describe the earlier, weaker framing this was deliberately corrected away from.
+
+Standalone, self-hosted, pip-installable — extracted from the MCP Learning Project's proven
+`/usage` dashboard (`c:\Users\vijay\OneDrive\Desktop\Claude Workspace\MCP Project\src\backend\database.py`
+/ `api.py`). It is a **separate product in a separate repo**, not a subfolder of that project.
 Full rationale, architecture, data model, API contract, and design tokens are in
 `docs/DESIGN.md` — this file won't duplicate that content, only point to it.
 

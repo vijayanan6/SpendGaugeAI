@@ -1,8 +1,10 @@
 # SpendGaugeAI
 
-A self-hosted cost tracker for the Claude API. No account, no SDK wrapping — your app POSTs
-token usage after each call, SpendGaugeAI computes cost, tracks your credit balance and burn
-rate, and optionally pings Discord when something needs attention.
+**AI FinOps for self-hosted Claude API developers.** Not a usage-log viewer — a financial
+control center for your Claude spend: set a budget, watch burn rate and runway in real time,
+and get alerted before you run out. No account, no SDK wrapping — your app POSTs token usage
+after each call, SpendGaugeAI computes cost, enforces the budget policy you set, and optionally
+pings Discord when something needs attention.
 
 > **Status: design phase.** The architecture, data model, API contract, and UI are designed and
 > signed off (see [`docs/DESIGN.md`](docs/DESIGN.md) and the approved visual mockup at
@@ -10,13 +12,15 @@ rate, and optionally pings Discord when something needs attention.
 
 ## Why
 
-Langfuse, Helicone, and Portkey already do hosted multi-provider LLM cost tracking well, for
-free at small scale. SpendGaugeAI isn't trying to out-feature them — it's for the narrower case
-where you specifically don't want to hand a hosted service your prompts, costs, or an account
-signup just to see what you're spending. `docker run` (or `pip install`), point your app at it,
-done. Your data stays on your machine.
+Langfuse, Helicone, and Portkey already do hosted multi-provider LLM observability well, for
+free at small scale — but they're built around *logs and traces*, not spend *control*. Their
+cost views are a side effect of tracing, not the product's center of gravity. SpendGaugeAI
+inverts that: cost, budget, and burn rate *are* the product, and it's for the narrower case
+where you also don't want to hand a hosted service your prompts, costs, or an account signup
+just to manage your own budget. `docker run` (or `pip install`), point your app at it, done.
+Your data — and your spend policy — stay on your machine.
 
-The accounting engine underneath isn't new — it's extracted from a cost dashboard that's
+The accounting engine underneath isn't new — it's extracted from a cost control panel that's
 already caught real billing bugs against real Anthropic invoices in production use.
 
 ## How it will work
@@ -114,9 +118,12 @@ reactivity rather than rebuilt from scratch in a different framework.
 
 ## What's in v1
 
-- Token/cost accounting per model, per project, per session, per tool
-- Credit balance tracking: burn rate, forecast, "estimated runway"
-- Discord alerts: low balance (two-tier), spend spikes, daily digest, stale-pricing warnings
+- Budget policy: set a starting balance and alert threshold, track burn rate, forecast
+  "estimated runway" — the control layer, not just a number
+- Token/cost accounting per model, per project, per session, per tool — the ledger underneath
+  the policy, not the headline feature
+- Discord alerts: low balance (two-tier), spend spikes, daily digest, stale-pricing warnings —
+  policy enforcement, not just notifications
 - A single shared API key gates the two mutating endpoints (`POST /usage/log`, `POST /usage/credit`)
 - Official Python (`spendgaugeai`) and TypeScript/JS (`spendgaugeai-client`) SDKs, both with an
   auto-reporting `wrap()` and a manual `.log()` — any other language integrates via the
