@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SpendGaugeAI — Dashboard Mockup</title>
+<style>
+  :root {
+    --font-display: ui-serif, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
+
+    --bg: #F5F4FA;
+    --surface: #FBFAFE;
+    --surface-raised: #FFFFFF;
+    --surface-sunken: #ECEAF6;
+    --border: #DCD9EE;
+    --border-soft: #E7E4F5;
+    --text-primary: #201D2E;
+    --text-secondary: #5B5670;
+    --text-muted: #918CAA;
+
+    --primary: #6355D6;
+    --primary-text: #4A3DB8;
+    --primary-soft: #E7E4FA;
+    --secondary: #B5791A;
+    --secondary-text: #8A5D14;
+    --secondary-soft: #F5E7CC;
+    --good: #2F7A50;
+    --warning: #C2811A;
+    --critical: #C13B3B;
+
+    --shadow-card: 0 1px 2px rgba(32,29,46,0.05), 0 1px 1px rgba(32,29,46,0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171521;
+      --surface: #211D33;
+      --surface-raised: #29233F;
+      --surface-sunken: #120F1C;
+      --border: #362F4E;
+      --border-soft: #2A2440;
+      --text-primary: #F1EFFA;
+      --text-secondary: #B8B2CF;
+      --text-muted: #7A748F;
+
+      --primary: #7C6EF0;
+      --primary-text: #A79BF5;
+      --primary-soft: #2A2450;
+      --secondary: #C77F1F;
+      --secondary-text: #E8AE55;
+      --secondary-soft: #3A2C14;
+      --good: #3E8F63;
+      --warning: #C2811A;
+      --critical: #DC3535;
+      --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171521; --surface: #211D33; --surface-raised: #29233F; --surface-sunken: #120F1C;
+    --border: #362F4E; --border-soft: #2A2440;
+    --text-primary: #F1EFFA; --text-secondary: #B8B2CF; --text-muted: #7A748F;
+    --primary: #7C6EF0; --primary-text: #A79BF5; --primary-soft: #2A2450;
+    --secondary: #C77F1F; --secondary-text: #E8AE55; --secondary-soft: #3A2C14;
+    --good: #3E8F63; --warning: #C2811A; --critical: #DC3535;
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F4FA; --surface: #FBFAFE; --surface-raised: #FFFFFF; --surface-sunken: #ECEAF6;
+    --border: #DCD9EE; --border-soft: #E7E4F5;
+    --text-primary: #201D2E; --text-secondary: #5B5670; --text-muted: #918CAA;
+    --primary: #6355D6; --primary-text: #4A3DB8; --primary-soft: #E7E4FA;
+    --secondary: #B5791A; --secondary-text: #8A5D14; --secondary-soft: #F5E7CC;
+    --good: #2F7A50; --warning: #C2811A; --critical: #C13B3B;
+    --shadow-card: 0 1px 2px rgba(32,29,46,0.05), 0 1px 1px rgba(32,29,46,0.04);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    padding: 28px clamp(16px, 4vw, 40px) 60px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  ::selection { background: var(--primary-soft); }
+  a { color: var(--primary-text); }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* ── Header ─────────────────────────────────────────────────────── */
+  .topbar {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 22px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand-mark {
+    font-family: var(--font-display); font-weight: 600; font-size: 1.5rem;
+    letter-spacing: -0.01em;
+  }
+  .brand-mark .accent { color: var(--primary-text); }
+  .brand-sub { color: var(--text-muted); font-size: 0.8rem; }
+  .topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-secondary); padding: 6px 12px; border-radius: 8px;
+    font-size: 0.78rem;
+  }
+  select.pill { cursor: pointer; appearance: none; padding-right: 26px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+                       linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position: right 12px center, right 7px center; background-size: 5px 5px; background-repeat: no-repeat; }
+  .badge-selfhost { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--good); }
+  .badge-selfhost .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+
+  /* ── Instrument hero ────────────────────────────────────────────── */
+  .hero {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: var(--shadow-card);
+    padding: 26px 28px; margin-bottom: 22px;
+    display: grid; grid-template-columns: auto 1fr; gap: 32px; align-items: center;
+  }
+  .hero.state-warning { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
+  .hero.state-critical { border-color: color-mix(in srgb, var(--critical) 45%, var(--border)); }
+  @media (max-width: 720px) { .hero { grid-template-columns: 1fr; } }
+
+  .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .hero-body { display: grid; grid-template-columns: auto 1fr; gap: 32px; align-items: center; }
+  @media (max-width: 720px) { .hero-body { grid-template-columns: 1fr; } }
+
+  .config-toggle {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--surface-sunken);
+    border: 1px solid var(--border); color: var(--text-secondary); font-size: 0.76rem;
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  .config-toggle:hover { color: var(--text-primary); border-color: var(--primary); }
+  .config-toggle svg { transition: transform 0.15s ease; }
+  details[open] .config-toggle svg { transform: rotate(180deg); }
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+
+  .config-panel {
+    margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border-soft);
+    display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  }
+  .config-field { display: flex; flex-direction: column; gap: 5px; }
+  .config-field label { font-size: 0.72rem; color: var(--text-muted); }
+  .config-field input[type="number"] {
+    background: var(--surface-sunken); border: 1px solid var(--border); color: var(--text-primary);
+    padding: 8px 10px; border-radius: 7px; font-size: 0.88rem; width: 120px; font-variant-numeric: tabular-nums;
+  }
+  .config-field input:focus { outline: none; border-color: var(--primary); }
+  .config-check { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: var(--text-secondary); cursor: pointer; max-width: 260px; padding-bottom: 9px; }
+  .config-check input { width: auto; margin: 0; accent-color: var(--primary); }
+  .btn-save {
+    background: var(--primary); color: var(--surface); border: none; font-weight: 600;
+    padding: 9px 18px; border-radius: 7px; font-size: 0.82rem; cursor: pointer;
+  }
+  .btn-save:hover { opacity: 0.9; }
+  .prev-period-note { flex-basis: 100%; font-size: 0.75rem; color: var(--text-muted); margin-top: -4px; }
+
+  .gauge-block { display: flex; align-items: center; gap: 20px; }
+  .gauge-figure { display: flex; flex-direction: column; }
+  .gauge-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); margin-bottom: 6px; }
+  .gauge-value { font-family: var(--font-display); font-size: 2.5rem; font-weight: 600; line-height: 1; color: var(--good); }
+  .gauge-sub { font-size: 0.8rem; color: var(--text-secondary); margin-top: 8px; }
+  .gauge-sub strong { color: var(--text-primary); font-weight: 600; }
+
+  .hero-readouts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  @media (max-width: 920px) { .hero-readouts { grid-template-columns: repeat(2, 1fr); } }
+  .readout-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 5px; }
+  .readout-value { font-size: 1.15rem; font-weight: 600; }
+  .readout-note { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
+  .readout-divider { grid-column: 1 / -1; border-top: 1px solid var(--border-soft); margin: 2px 0; }
+  .forecast-row { grid-column: 1 / -1; display: flex; gap: 22px; flex-wrap: wrap; }
+  .forecast-item { display: flex; align-items: baseline; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+  .forecast-item strong { font-size: 0.92rem; color: var(--text-primary); font-weight: 600; }
+
+  /* ── Stat tiles ─────────────────────────────────────────────────── */
+  .grid-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow-card); position: relative;
+  }
+  .tile::before {
+    content: ''; position: absolute; top: 0; left: 14px; right: 14px; height: 2px;
+    background: var(--primary); border-radius: 0 0 3px 3px; opacity: 0.55;
+  }
+  .tile .t-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
+  .tile .t-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
+  .tile .t-sub { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; }
+
+  /* ── Sections ───────────────────────────────────────────────────── */
+  .section {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 24px; margin-bottom: 18px; box-shadow: var(--shadow-card);
+  }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; gap: 12px; flex-wrap: wrap; }
+  .section-head h2 { font-size: 0.98rem; font-weight: 600; margin: 0; }
+  .section-head .hint { font-size: 0.74rem; color: var(--text-muted); }
+
+  .split-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 780px) { .split-row { grid-template-columns: 1fr; } }
+
+  /* Token bars */
+  .tbar-row { margin-bottom: 13px; }
+  .tbar-row:last-child { margin-bottom: 0; }
+  .tbar-label { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 5px; }
+  .tbar-bg { background: var(--surface-sunken); border-radius: 5px; height: 7px; overflow: hidden; }
+  .tbar-fill { height: 7px; border-radius: 5px; }
+
+  /* Donut + legend */
+  .donut-wrap { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; }
+  .legend { display: flex; flex-direction: column; gap: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 9px; font-size: 0.83rem; cursor: default; }
+  .legend-dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+  .legend-item .l-name { color: var(--text-primary); font-weight: 500; }
+  .legend-item .l-sub { font-size: 0.72rem; color: var(--text-muted); }
+
+  /* Daily chart */
+  .chart-tooltip {
+    position: fixed; background: var(--surface-raised); border: 1px solid var(--border);
+    color: var(--text-primary); font-size: 0.74rem; padding: 7px 11px; border-radius: 8px;
+    pointer-events: none; display: none; z-index: 100; box-shadow: var(--shadow-card);
+    white-space: nowrap;
+  }
+  .chart-tooltip .tt-cost { font-weight: 600; }
+  .chart-tooltip .tt-date { color: var(--text-muted); margin-bottom: 2px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th {
+    text-align: left; color: var(--text-muted); font-weight: 500; padding: 0 12px 10px;
+    border-bottom: 1px solid var(--border); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  th.num, td.num { text-align: right; }
+  td { padding: 11px 12px; border-bottom: 1px solid var(--border-soft); color: var(--text-primary); }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface-sunken); }
+
+  .model-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 0.71rem; font-weight: 600; }
+  .model-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .model-chip.sonnet { background: var(--primary-soft); color: var(--primary-text); }
+  .model-chip.sonnet .dot { background: var(--primary); }
+  .model-chip.haiku { background: var(--secondary-soft); color: var(--secondary-text); }
+  .model-chip.haiku .dot { background: var(--secondary); }
+
+  .share-bar { background: var(--surface-sunken); border-radius: 3px; height: 5px; margin-top: 6px; overflow: hidden; }
+  .share-fill { height: 5px; border-radius: 3px; }
+  .session-id { font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-secondary); }
+  .tool-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; vertical-align: middle; }
+
+  .pricing-note {
+    background: var(--surface-sunken); border: 1px solid var(--border-soft); border-radius: 10px;
+    padding: 13px 16px; font-size: 0.73rem; color: var(--text-muted); line-height: 1.65; margin-top: 4px;
+  }
+  .pricing-note strong { color: var(--text-secondary); }
+
+  .footer-note { text-align: center; font-size: 0.75rem; color: var(--text-muted); margin-top: 26px; }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">Spend<span class="accent">Gauge</span>AI</div>
+      <div class="brand-sub">self-hosted Claude API cost tracker</div>
+    </div>
+    <div class="topbar-right">
+      <span class="badge-selfhost"><span class="dot"></span> localhost:8000 · your data</span>
+      <select class="pill">
+        <option>All projects</option>
+        <option>mcp-project</option>
+        <option>support-bot</option>
+        <option>personal-agent</option>
+      </select>
+      <span class="pill" style="cursor:pointer">↻ Refresh</span>
+    </div>
+  </div>
+
+  <!-- Instrument hero: credit gauge + readouts + balance configuration -->
+  <details class="hero" id="hero-details">
+    <summary>
+      <div class="hero-top">
+        <div class="hero-body">
+          <div class="gauge-block">
+            <svg width="128" height="128" viewBox="0 0 128 128">
+              <circle cx="64" cy="64" r="52" fill="none" stroke="var(--surface-sunken)" stroke-width="12"/>
+              <circle cx="64" cy="64" r="52" fill="none" stroke="var(--good)" stroke-width="12"
+                stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="106.5"
+                transform="rotate(-90 64 64)"/>
+              <text x="64" y="60" text-anchor="middle" font-family="var(--font-display)" font-size="15" font-weight="600" fill="var(--text-primary)">67%</text>
+              <text x="64" y="76" text-anchor="middle" font-size="8.5" fill="var(--text-muted)">remaining</text>
+            </svg>
+            <div class="gauge-figure">
+              <div class="gauge-label">Balance remaining</div>
+              <div class="gauge-value tabular">$16.72</div>
+              <div class="gauge-sub"><strong>$8.28</strong> spent of $25.00 starting balance</div>
+            </div>
+          </div>
+
+          <div class="hero-readouts">
+            <div>
+              <div class="readout-label">Burn rate</div>
+              <div class="readout-value tabular">$1.06<span style="font-size:0.75rem;color:var(--text-muted)">/day</span></div>
+            </div>
+            <div>
+              <div class="readout-label">Est. runway</div>
+              <div class="readout-value tabular" style="color:var(--good)">~16d</div>
+              <div class="readout-note">forecast, not an expiration</div>
+            </div>
+            <div>
+              <div class="readout-label">Total requests</div>
+              <div class="readout-value tabular">1,842</div>
+            </div>
+            <div>
+              <div class="readout-label">Alert below</div>
+              <div class="readout-value tabular">$5.00</div>
+            </div>
+            <div class="readout-divider"></div>
+            <div class="forecast-row">
+              <div class="forecast-item">30d forecast <strong class="tabular">$31.66</strong></div>
+              <div class="forecast-item">60d forecast <strong class="tabular">$63.32</strong></div>
+              <div class="forecast-item">90d forecast <strong class="tabular">$94.98</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <span class="config-toggle" title="Configure starting balance, alert threshold, and spend-tracking reset">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1 3L5.5 8L10 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Configure
+        </span>
+      </div>
+    </summary>
+
+    <div class="config-panel">
+      <div class="config-field">
+        <label for="cfg-balance">Starting balance (USD)</label>
+        <input type="number" id="cfg-balance" value="25.00" step="0.01" min="0" class="tabular" />
+      </div>
+      <div class="config-field">
+        <label for="cfg-alert">Alert below (USD)</label>
+        <input type="number" id="cfg-alert" value="5.00" step="0.10" min="0" class="tabular" />
+      </div>
+      <label class="config-check" title="Starts fresh spend tracking from now. Historical charts and tables are never deleted — only the remaining/burn-rate math above resets.">
+        <input type="checkbox" id="cfg-reset" />
+        Reset spend tracking (start fresh from now)
+      </label>
+      <button class="btn-save" type="button">Save</button>
+      <div class="prev-period-note">Previous period: $6.4120 over 11 day(s) ($0.5829/day) — reset 2026-07-03</div>
+    </div>
+  </details>
+
+  <!-- Stat tiles -->
+  <div class="grid-tiles">
+    <div class="tile"><div class="t-label">Total Spent</div><div class="t-value tabular">$8.2823</div><div class="t-sub">estimated USD</div></div>
+    <div class="tile"><div class="t-label">Cache Hit Rate</div><div class="t-value tabular">32.9%</div></div>
+    <div class="tile"><div class="t-label">Cache Savings</div><div class="t-value tabular">$1.0980</div><div class="t-sub">vs. no caching</div></div>
+    <div class="tile"><div class="t-label">Input Tokens</div><div class="t-value tabular">1.24M</div></div>
+    <div class="tile"><div class="t-label">Output Tokens</div><div class="t-value tabular">380K</div></div>
+    <div class="tile"><div class="t-label">Web Searches</div><div class="t-value tabular">47</div><div class="t-sub">$0.01 each</div></div>
+  </div>
+
+  <!-- Token breakdown + Model split -->
+  <div class="split-row">
+    <div class="section">
+      <div class="section-head"><h2>Token Breakdown</h2></div>
+      <div class="tbar-row">
+        <div class="tbar-label"><span>Input</span><span class="tabular">1.24M</span></div>
+        <div class="tbar-bg"><div class="tbar-fill" style="width:100%;background:var(--primary)"></div></div>
+      </div>
+      <div class="tbar-row">
+        <div class="tbar-label"><span>Cache Read</span><span class="tabular">610K</span></div>
+        <div class="tbar-bg"><div class="tbar-fill" style="width:49%;background:var(--secondary)"></div></div>
+      </div>
+      <div class="tbar-row">
+        <div class="tbar-label"><span>Output</span><span class="tabular">380K</span></div>
+        <div class="tbar-bg"><div class="tbar-fill" style="width:31%;background:var(--good)"></div></div>
+      </div>
+      <div class="tbar-row">
+        <div class="tbar-label"><span>Cache Write</span><span class="tabular">95K</span></div>
+        <div class="tbar-bg"><div class="tbar-fill" style="width:8%;background:var(--text-muted)"></div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2>Cost by Model</h2></div>
+      <div class="donut-wrap">
+        <svg width="112" height="112" viewBox="0 0 112 112">
+          <circle cx="56" cy="56" r="42" fill="none" stroke="var(--surface-sunken)" stroke-width="16"/>
+          <circle cx="56" cy="56" r="42" fill="none" stroke="var(--primary)" stroke-width="16"
+            stroke-dasharray="222.4 41.5" stroke-dashoffset="0" transform="rotate(-90 56 56)"/>
+          <circle cx="56" cy="56" r="42" fill="none" stroke="var(--secondary)" stroke-width="16"
+            stroke-dasharray="41.5 222.4" stroke-dashoffset="-222.4" transform="rotate(-90 56 56)"/>
+          <text x="56" y="52" text-anchor="middle" font-family="var(--font-display)" font-size="13" font-weight="600" fill="var(--text-primary)">$8.28</text>
+          <text x="56" y="66" text-anchor="middle" font-size="7.5" fill="var(--text-muted)">total cost</text>
+        </svg>
+        <div class="legend">
+          <div class="legend-item">
+            <span class="legend-dot" style="background:var(--primary)"></span>
+            <div><div class="l-name">Sonnet — 84%</div><div class="l-sub">1,290 req · $6.9412</div></div>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background:var(--secondary)"></span>
+            <div><div class="l-name">Haiku — 16%</div><div class="l-sub">552 req · $1.3411</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily spend -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Daily Spend — last 14 days</h2>
+      <span class="hint">hover a point for detail</span>
+    </div>
+    <svg id="daily-svg" width="100%" height="180" style="overflow:visible"></svg>
+    <div class="chart-tooltip" id="chart-tooltip"></div>
+  </div>
+
+  <!-- Cost by Project -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Cost by Project</h2>
+      <span class="hint">all projects reporting to this instance</span>
+    </div>
+    <table>
+      <thead><tr><th>Project</th><th class="num">Requests</th><th class="num">Cost</th><th>Share</th><th>Last Active</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>mcp-project</strong></td><td class="num tabular">1,510</td><td class="num tabular">$6.9420</td>
+          <td style="min-width:120px">84%<div class="share-bar"><div class="share-fill" style="width:84%;background:var(--primary)"></div></div></td>
+          <td style="color:var(--text-muted);font-size:0.78rem">2026-07-17</td>
+        </tr>
+        <tr>
+          <td><strong>support-bot</strong></td><td class="num tabular">268</td><td class="num tabular">$1.1023</td>
+          <td style="min-width:120px">13%<div class="share-bar"><div class="share-fill" style="width:13%;background:var(--primary)"></div></div></td>
+          <td style="color:var(--text-muted);font-size:0.78rem">2026-07-16</td>
+        </tr>
+        <tr>
+          <td><strong>personal-agent</strong></td><td class="num tabular">64</td><td class="num tabular">$0.2380</td>
+          <td style="min-width:120px">3%<div class="share-bar"><div class="share-fill" style="width:3%;background:var(--primary)"></div></div></td>
+          <td style="color:var(--text-muted);font-size:0.78rem">2026-07-14</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Top sessions -->
+  <div class="section">
+    <div class="section-head"><h2>Top Sessions by Cost</h2></div>
+    <table>
+      <thead><tr><th>Session</th><th class="num">Requests</th><th class="num">Cost</th><th>Last Active</th></tr></thead>
+      <tbody>
+        <tr><td><span class="session-id">#1 7f3a9c2e1b04…</span></td><td class="num tabular">86</td><td class="num tabular">$1.9820</td><td style="color:var(--text-muted);font-size:0.78rem">2026-07-17</td></tr>
+        <tr><td><span class="session-id">#2 c81de5f4a291…</span></td><td class="num tabular">54</td><td class="num tabular">$1.1042</td><td style="color:var(--text-muted);font-size:0.78rem">2026-07-16</td></tr>
+        <tr><td><span class="session-id">#3 0a6b7d3e8f12…</span></td><td class="num tabular">41</td><td class="num tabular">$0.8715</td><td style="color:var(--text-muted);font-size:0.78rem">2026-07-16</td></tr>
+        <tr><td><span class="session-id">#4 5e2c1a9b6d40…</span></td><td class="num tabular">37</td><td class="num tabular">$0.6203</td><td style="color:var(--text-muted);font-size:0.78rem">2026-07-15</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Model detail -->
+  <div class="section">
+    <div class="section-head"><h2>Model Detail</h2></div>
+    <table>
+      <thead><tr><th>Model</th><th class="num">Requests</th><th class="num">Cost</th><th>Share</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="model-chip sonnet"><span class="dot"></span>Sonnet</span> <span style="font-size:0.76rem;color:var(--text-muted)">claude-sonnet-4-6</span></td>
+          <td class="num tabular">1,290</td><td class="num tabular">$6.9412</td>
+          <td style="width:130px">84%<div class="share-bar"><div class="share-fill" style="width:84%;background:var(--primary)"></div></div></td>
+        </tr>
+        <tr>
+          <td><span class="model-chip haiku"><span class="dot"></span>Haiku</span> <span style="font-size:0.76rem;color:var(--text-muted)">claude-haiku-4-5</span></td>
+          <td class="num tabular">552</td><td class="num tabular">$1.3411</td>
+          <td style="width:130px">16%<div class="share-bar"><div class="share-fill" style="width:16%;background:var(--secondary)"></div></div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Cost by tool -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Cost by Tool</h2>
+      <span class="hint">which tools are being called and what they cost</span>
+    </div>
+    <table>
+      <thead><tr><th>Tool</th><th class="num">Calls</th><th class="num">Total Cost</th><th class="num">Avg / Call</th><th>Frequency</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tool-swatch" style="background:var(--primary)"></span><strong>search_docs</strong></td><td class="num tabular">312</td><td class="num tabular">$2.1140</td><td class="num tabular" style="color:var(--text-secondary)">$0.0068</td><td style="min-width:110px">100%<div class="share-bar"><div class="share-fill" style="width:100%;background:var(--primary)"></div></div></td></tr>
+        <tr><td><span class="tool-swatch" style="background:var(--secondary)"></span><strong>web_search</strong></td><td class="num tabular">47</td><td class="num tabular">$0.4700</td><td class="num tabular" style="color:var(--text-secondary)">$0.0100</td><td style="min-width:110px">15%<div class="share-bar"><div class="share-fill" style="width:15%;background:var(--secondary)"></div></div></td></tr>
+        <tr><td><span class="tool-swatch" style="background:var(--good)"></span><strong>manage_notes</strong></td><td class="num tabular">38</td><td class="num tabular">$0.1862</td><td class="num tabular" style="color:var(--text-secondary)">$0.0049</td><td style="min-width:110px">12%<div class="share-bar"><div class="share-fill" style="width:12%;background:var(--good)"></div></div></td></tr>
+        <tr><td><span class="tool-swatch" style="background:var(--warning)"></span><strong>read_doc</strong></td><td class="num tabular">29</td><td class="num tabular">$0.1327</td><td class="num tabular" style="color:var(--text-secondary)">$0.0046</td><td style="min-width:110px">9%<div class="share-bar"><div class="share-fill" style="width:9%;background:var(--warning)"></div></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pricing-note">
+    <strong>Pricing (estimates only):</strong>
+    Haiku — $0.001/1K input · $0.005/1K output · $0.0001/1K cache read &nbsp;|&nbsp;
+    Sonnet — $0.003/1K input · $0.015/1K output · $0.0003/1K cache read &nbsp;|&nbsp;
+    Verify exact spend at <strong>console.anthropic.com</strong>
+  </div>
+
+  <div class="footer-note">SpendGaugeAI v0.1.0 — self-hosted, single binary, your data never leaves this machine.</div>
+
+<script>
+  // Daily spend — line + area, faint grid, emphasized endpoint, hover tooltip.
+  const days = [
+    {day:'2026-07-04', cost:0.42, req:52}, {day:'2026-07-05', cost:0.58, req:64},
+    {day:'2026-07-06', cost:0.39, req:48}, {day:'2026-07-07', cost:0.71, req:88},
+    {day:'2026-07-08', cost:0.55, req:61}, {day:'2026-07-09', cost:0.88, req:104},
+    {day:'2026-07-10', cost:0.64, req:73}, {day:'2026-07-11', cost:0.47, req:55},
+    {day:'2026-07-12', cost:0.92, req:110}, {day:'2026-07-13', cost:1.12, req:132},
+    {day:'2026-07-14', cost:1.38, req:159}, {day:'2026-07-15', cost:0.97, req:118},
+    {day:'2026-07-16', cost:1.06, req:126}, {day:'2026-07-17', cost:1.51, req:151},
+  ];
+
+  function renderDaily() {
+    const svg = document.getElementById('daily-svg');
+    const tooltip = document.getElementById('chart-tooltip');
+    const rect = svg.getBoundingClientRect();
+    const W = rect.width || 900;
+    const padL = 40, padR = 12, padT = 16, padB = 26;
+    const chartW = W - padL - padR, chartH = 130;
+    svg.setAttribute('viewBox', `0 0 ${W} ${chartH + padT + padB}`);
+    svg.setAttribute('height', chartH + padT + padB);
+
+    const maxCost = Math.max(...days.map(d => d.cost));
+    const niceMax = Math.ceil(maxCost * 1.15 * 10) / 10;
+    const n = days.length;
+    const slotW = chartW / (n - 1);
+
+    const styles = getComputedStyle(document.documentElement);
+    const gridColor = styles.getPropertyValue('--border-soft').trim();
+    const axisText = styles.getPropertyValue('--text-muted').trim();
+    const brass = styles.getPropertyValue('--primary').trim();
+
+    let svgHtml = '';
+    // grid
+    const gridCount = 3;
+    for (let i = 0; i <= gridCount; i++) {
+      const val = (niceMax / gridCount) * i;
+      const y = padT + chartH - (val / niceMax) * chartH;
+      svgHtml += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="${gridColor}" stroke-width="1"/>`;
+      svgHtml += `<text x="${padL-8}" y="${y+3}" text-anchor="end" font-size="9.5" fill="${axisText}">$${val.toFixed(2)}</text>`;
+    }
+
+    const pts = days.map((d,i) => {
+      const x = padL + i * slotW;
+      const y = padT + chartH - (d.cost / niceMax) * chartH;
+      return {x, y, d};
+    });
+
+    // area fill
+    const areaPath = `M${pts[0].x},${padT+chartH} ` + pts.map(p=>`L${p.x},${p.y}`).join(' ') + ` L${pts[n-1].x},${padT+chartH} Z`;
+    svgHtml += `<path d="${areaPath}" fill="${brass}" opacity="0.10"/>`;
+
+    // line
+    const linePath = 'M' + pts.map(p=>`${p.x},${p.y}`).join(' L');
+    svgHtml += `<path d="${linePath}" fill="none" stroke="${brass}" stroke-width="2"/>`;
+
+    // points (endpoint emphasized)
+    pts.forEach((p,i) => {
+      const isLast = i === n - 1;
+      const r = isLast ? 5 : 3;
+      svgHtml += `<circle class="pt" cx="${p.x}" cy="${p.y}" r="${r+4}" fill="transparent" data-i="${i}" style="cursor:pointer"/>`;
+      svgHtml += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${isLast ? brass : 'var(--surface)'}" stroke="${brass}" stroke-width="${isLast?0:2}"/>`;
+      if (i % 2 === 0 || isLast) {
+        svgHtml += `<text x="${p.x}" y="${padT+chartH+16}" text-anchor="middle" font-size="9.5" fill="${axisText}">${p.d.day.slice(5)}</text>`;
+      }
+    });
+
+    svg.innerHTML = svgHtml;
+    svg.querySelectorAll('.pt').forEach(el => {
+      el.addEventListener('mousemove', e => {
+        const d = days[+el.dataset.i];
+        tooltip.innerHTML = `<div class="tt-date">${d.day}</div><div class="tt-cost">$${d.cost.toFixed(4)} · ${d.req} req</div>`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX + 14) + 'px';
+        tooltip.style.top = (e.clientY - 34) + 'px';
+      });
+      el.addEventListener('mouseleave', () => tooltip.style.display = 'none');
+    });
+  }
+  renderDaily();
+  window.addEventListener('resize', renderDaily);
+</script>
+</body>
+</html>
