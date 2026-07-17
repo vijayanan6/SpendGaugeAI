@@ -22,7 +22,8 @@ design change (don't let it silently drift stale).
 | Frontend state/data | Alpine `x-data` per page + `fetch()` polling, no bundler, no router | Multi-page via real FastAPI routes (same pattern the source project already uses for `/`, `/usage`, `/logs`) — no SPA router needed |
 | Packaging: Docker | **Single-stage** `Dockerfile` (`python:3.12-slim`) | No Node anywhere — the Tailwind standalone CLI is a small downloaded binary, not an npm/node_modules tree (§9) |
 | Packaging: pip | Compiled CSS + vendored JS included as package data | `pip install` ships everything needed; no Node at install time, dev time, or runtime (§9) |
-| Auth | Single shared API key, Bearer token, auto-generated + persisted if unset | Gates `POST /usage/log` and `POST /usage/credit` only; reads stay open (§5) |
+| Auth | One shared secret, two schemes: Bearer (machine calls) + HTTP Basic (browser) | Tightened from an earlier revision — gates *every* route except `/health`, not just writes (§5) |
+| Icons | Heroicons (MIT, Tailwind Labs), vendored inline `<svg>` | Natural pairing with Tailwind; `currentColor`-driven so it needs zero extra theme wiring for light/dark (§8) |
 | Optional integration | Discord webhook (raw HTTP, no SDK) | No-ops cleanly if unset, same pattern as the source project (§7) |
 | Client SDK: Python | `spendgaugeai` package — `SpendGaugeAIClient`, `wrap()` | Same install as the server; `wrap()` auto-reports, `.log()` for manual control (§8a) |
 | Client SDK: JS/TS | `spendgaugeai-client` npm package, zero runtime deps | Separate, independently-versioned package a *JS/TS app* installs — does not affect the server's Node-free story (§8a) |
@@ -463,6 +464,20 @@ block — that file is the canonical copy, this table is a summary for quick ref
 - Body (`--font-body`): native system-ui stack — deliberately not Inter/Space Grotesk (flagged
   in the `artifact-design` skill as a defaulted "safe" choice), appropriate for a technical tool.
 - Data (`--font-mono`): `ui-monospace` stack + `tabular-nums` wherever digits line up in columns.
+
+**Iconography** (added in a later mockup pass — Vijay wanted the dashboard to read as a
+polished product, not text-and-numbers-only): **Heroicons** (MIT, Tailwind Labs' own icon set —
+a natural pairing since Tailwind is already the CSS choice), vendored as plain inline `<svg>`
+markup, not an icon font or an npm/CDN dependency — same "vendor exactly what's needed" pattern
+already used for Alpine.js itself. Every icon uses `stroke="currentColor"`, so it inherits
+color from its CSS context automatically and needs zero extra theme wiring for light/dark.
+Applied to: all stat tiles, all section headers, and the two hero readouts most worth a quick
+visual anchor (Burn rate, Est. runway) — deliberately *not* applied to every readout or to the
+tool-table rows, which already use categorical color-coded swatches (§ dataviz color table) and
+would be visually noisy with icons added on top. A small custom logo mark was added alongside
+this — not a Heroicon, a hand-drawn glyph reusing the *exact same construction* as the hero
+gauge (track arc + colored fill arc, same 67% fill level) at a much smaller scale, so the brand
+mark and the product read as one visual system rather than a wordmark bolted onto unrelated UI.
 
 **Balance configuration** (the piece missed in the first mockup pass): a collapsible
 `<details>` panel behind a "Configure" toggle in the hero, holding the same controls as the

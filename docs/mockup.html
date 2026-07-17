@@ -10,70 +10,78 @@
     --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace;
 
-    --bg: #F5F4FA;
-    --surface: #FBFAFE;
+    --bg: #F7F8FC;
+    --surface: #FFFFFF;
     --surface-raised: #FFFFFF;
-    --surface-sunken: #ECEAF6;
-    --border: #DCD9EE;
-    --border-soft: #E7E4F5;
-    --text-primary: #201D2E;
-    --text-secondary: #5B5670;
-    --text-muted: #918CAA;
+    --surface-sunken: #EEF1F8;
+    --border: #DCE1EE;
+    --border-soft: #E7EAF4;
+    --text-primary: #14192B;
+    --text-secondary: #4A5170;
+    --text-muted: #8890AC;
 
-    --primary: #6355D6;
-    --primary-text: #4A3DB8;
-    --primary-soft: #E7E4FA;
-    --secondary: #B5791A;
-    --secondary-text: #8A5D14;
-    --secondary-soft: #F5E7CC;
+    --primary: #1A4FBF;
+    --primary-text: #163F99;
+    --primary-soft: #E3EAFB;
+    --secondary: #B8860B;
+    --secondary-text: #8F6908;
+    --secondary-soft: #F5EACC;
     --good: #2F7A50;
     --warning: #C2811A;
     --critical: #C13B3B;
 
-    --shadow-card: 0 1px 2px rgba(32,29,46,0.05), 0 1px 1px rgba(32,29,46,0.04);
+    --shadow-card: 0 1px 2px rgba(20,25,43,0.06), 0 1px 1px rgba(20,25,43,0.04);
+    --shadow-elevated: 0 20px 40px -12px rgba(26,79,191,0.18), 0 8px 20px -8px rgba(20,25,43,0.12), 0 1px 0 rgba(255,255,255,0.6) inset;
+    --sheen: inset 0 1px 0 rgba(255,255,255,0.7);
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #171521;
-      --surface: #211D33;
-      --surface-raised: #29233F;
-      --surface-sunken: #120F1C;
-      --border: #362F4E;
-      --border-soft: #2A2440;
-      --text-primary: #F1EFFA;
-      --text-secondary: #B8B2CF;
-      --text-muted: #7A748F;
+      --bg: #0E1526;
+      --surface: #161E36;
+      --surface-raised: #1D2745;
+      --surface-sunken: #0A0F1C;
+      --border: #2A3355;
+      --border-soft: #212A47;
+      --text-primary: #F0F2FA;
+      --text-secondary: #AEB4CE;
+      --text-muted: #6E7592;
 
-      --primary: #7C6EF0;
-      --primary-text: #A79BF5;
-      --primary-soft: #2A2450;
-      --secondary: #C77F1F;
-      --secondary-text: #E8AE55;
-      --secondary-soft: #3A2C14;
+      --primary: #4B7FE8;
+      --primary-text: #7DA3F0;
+      --primary-soft: #1C2B4D;
+      --secondary: #B8791A;
+      --secondary-text: #E0AA4E;
+      --secondary-soft: #3A2C10;
       --good: #3E8F63;
       --warning: #C2811A;
       --critical: #DC3535;
-      --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-card: 0 1px 3px rgba(0,0,0,0.45);
+      --shadow-elevated: 0 24px 48px -12px rgba(0,0,0,0.55), 0 10px 24px -8px rgba(75,127,232,0.15), 0 1px 0 rgba(255,255,255,0.05) inset;
+      --sheen: inset 0 1px 0 rgba(255,255,255,0.06);
     }
   }
   :root[data-theme="dark"] {
-    --bg: #171521; --surface: #211D33; --surface-raised: #29233F; --surface-sunken: #120F1C;
-    --border: #362F4E; --border-soft: #2A2440;
-    --text-primary: #F1EFFA; --text-secondary: #B8B2CF; --text-muted: #7A748F;
-    --primary: #7C6EF0; --primary-text: #A79BF5; --primary-soft: #2A2450;
-    --secondary: #C77F1F; --secondary-text: #E8AE55; --secondary-soft: #3A2C14;
+    --bg: #0E1526; --surface: #161E36; --surface-raised: #1D2745; --surface-sunken: #0A0F1C;
+    --border: #2A3355; --border-soft: #212A47;
+    --text-primary: #F0F2FA; --text-secondary: #AEB4CE; --text-muted: #6E7592;
+    --primary: #4B7FE8; --primary-text: #7DA3F0; --primary-soft: #1C2B4D;
+    --secondary: #B8791A; --secondary-text: #E0AA4E; --secondary-soft: #3A2C10;
     --good: #3E8F63; --warning: #C2811A; --critical: #DC3535;
-    --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.45);
+    --shadow-elevated: 0 24px 48px -12px rgba(0,0,0,0.55), 0 10px 24px -8px rgba(75,127,232,0.15), 0 1px 0 rgba(255,255,255,0.05) inset;
+    --sheen: inset 0 1px 0 rgba(255,255,255,0.06);
   }
   :root[data-theme="light"] {
-    --bg: #F5F4FA; --surface: #FBFAFE; --surface-raised: #FFFFFF; --surface-sunken: #ECEAF6;
-    --border: #DCD9EE; --border-soft: #E7E4F5;
-    --text-primary: #201D2E; --text-secondary: #5B5670; --text-muted: #918CAA;
-    --primary: #6355D6; --primary-text: #4A3DB8; --primary-soft: #E7E4FA;
-    --secondary: #B5791A; --secondary-text: #8A5D14; --secondary-soft: #F5E7CC;
+    --bg: #F7F8FC; --surface: #FFFFFF; --surface-raised: #FFFFFF; --surface-sunken: #EEF1F8;
+    --border: #DCE1EE; --border-soft: #E7EAF4;
+    --text-primary: #14192B; --text-secondary: #4A5170; --text-muted: #8890AC;
+    --primary: #1A4FBF; --primary-text: #163F99; --primary-soft: #E3EAFB;
+    --secondary: #B8860B; --secondary-text: #8F6908; --secondary-soft: #F5EACC;
     --good: #2F7A50; --warning: #C2811A; --critical: #C13B3B;
-    --shadow-card: 0 1px 2px rgba(32,29,46,0.05), 0 1px 1px rgba(32,29,46,0.04);
+    --shadow-card: 0 1px 2px rgba(20,25,43,0.06), 0 1px 1px rgba(20,25,43,0.04);
+    --shadow-elevated: 0 20px 40px -12px rgba(26,79,191,0.18), 0 8px 20px -8px rgba(20,25,43,0.12), 0 1px 0 rgba(255,255,255,0.6) inset;
+    --sheen: inset 0 1px 0 rgba(255,255,255,0.7);
   }
 
   * { box-sizing: border-box; }
@@ -98,19 +106,36 @@
     display: flex; align-items: flex-end; justify-content: space-between;
     gap: 16px; flex-wrap: wrap; margin-bottom: 22px;
   }
-  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo-mark { flex-shrink: 0; }
   .brand-mark {
     font-family: var(--font-display); font-weight: 600; font-size: 1.5rem;
     letter-spacing: -0.01em;
   }
   .brand-mark .accent { color: var(--primary-text); }
+  .brand-text { display: flex; flex-direction: column; gap: 1px; }
+
+  /* ── Icons — Heroicons (MIT, Tailwind Labs), vendored inline, currentColor-driven ── */
+  .icon { width: 17px; height: 17px; flex-shrink: 0; vertical-align: -3px; }
+  .icon-sm { width: 14px; height: 14px; vertical-align: -2px; }
+  .t-icon-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .t-icon-row .icon { color: var(--text-muted); }
+  .section-head h2 { display: flex; align-items: center; gap: 8px; }
+  .section-head h2 .icon { color: var(--primary-text); }
+  .readout-label .icon { color: var(--text-muted); margin-right: 3px; }
   .brand-sub { color: var(--text-muted); font-size: 0.8rem; }
   .topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
     background: var(--surface); border: 1px solid var(--border);
     color: var(--text-secondary); padding: 6px 12px; border-radius: 8px;
-    font-size: 0.78rem;
+    font-size: 0.78rem; box-shadow: var(--sheen);
+    transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .pill[style*="cursor:pointer"]:hover, select.pill:hover {
+    border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+    transform: translateY(-1px);
+    box-shadow: var(--sheen), 0 4px 10px -4px color-mix(in srgb, var(--primary) 25%, transparent);
   }
   select.pill { cursor: pointer; appearance: none; padding-right: 26px;
     background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
@@ -121,11 +146,23 @@
 
   /* ── Instrument hero ────────────────────────────────────────────── */
   .hero {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-    box-shadow: var(--shadow-card);
+    position: relative; overflow: hidden;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: var(--shadow-elevated), var(--sheen);
     padding: 26px 28px; margin-bottom: 22px;
     display: grid; grid-template-columns: auto 1fr; gap: 32px; align-items: center;
   }
+  .hero::before {
+    content: ''; position: absolute; top: -60%; left: -10%; width: 55%; height: 220%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--primary) 16%, transparent) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+  }
+  .hero::after {
+    content: ''; position: absolute; bottom: -80%; right: -5%; width: 40%; height: 200%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--secondary) 12%, transparent) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+  }
+  .hero > * { position: relative; z-index: 1; }
   .hero.state-warning { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
   .hero.state-critical { border-color: color-mix(in srgb, var(--critical) 45%, var(--border)); }
   @media (max-width: 720px) { .hero { grid-template-columns: 1fr; } }
@@ -138,8 +175,12 @@
     display: inline-flex; align-items: center; gap: 6px; background: var(--surface-sunken);
     border: 1px solid var(--border); color: var(--text-secondary); font-size: 0.76rem;
     padding: 6px 12px; border-radius: 8px; cursor: pointer; user-select: none; white-space: nowrap;
+    transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
   }
-  .config-toggle:hover { color: var(--text-primary); border-color: var(--primary); }
+  .config-toggle:hover {
+    color: var(--text-primary); border-color: var(--primary); transform: translateY(-1px);
+    box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--primary) 30%, transparent);
+  }
   .config-toggle svg { transition: transform 0.15s ease; }
   details[open] .config-toggle svg { transform: rotate(180deg); }
   details > summary { list-style: none; }
@@ -159,10 +200,17 @@
   .config-check { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: var(--text-secondary); cursor: pointer; max-width: 260px; padding-bottom: 9px; }
   .config-check input { width: auto; margin: 0; accent-color: var(--primary); }
   .btn-save {
-    background: var(--primary); color: var(--surface); border: none; font-weight: 600;
+    background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 75%, black));
+    color: #fff; border: none; font-weight: 600;
     padding: 9px 18px; border-radius: 7px; font-size: 0.82rem; cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--primary) 40%, transparent);
   }
-  .btn-save:hover { opacity: 0.9; }
+  .btn-save:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px -6px color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+  .btn-save:active { transform: translateY(0); }
   .prev-period-note { flex-basis: 100%; font-size: 0.75rem; color: var(--text-muted); margin-top: -4px; }
 
   .gauge-block { display: flex; align-items: center; gap: 20px; }
@@ -186,11 +234,18 @@
   .grid-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 22px; }
   .tile {
     background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 16px 18px; box-shadow: var(--shadow-card); position: relative;
+    padding: 16px 18px; box-shadow: var(--shadow-card), var(--sheen); position: relative;
+    transition: transform 0.18s cubic-bezier(.4,0,.2,1), box-shadow 0.18s cubic-bezier(.4,0,.2,1);
+  }
+  .tile:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px -8px color-mix(in srgb, var(--primary) 20%, transparent), var(--shadow-card), var(--sheen);
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
   }
   .tile::before {
     content: ''; position: absolute; top: 0; left: 14px; right: 14px; height: 2px;
-    background: var(--primary); border-radius: 0 0 3px 3px; opacity: 0.55;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    border-radius: 0 0 3px 3px; opacity: 0.7;
   }
   .tile .t-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
   .tile .t-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
@@ -199,7 +254,7 @@
   /* ── Sections ───────────────────────────────────────────────────── */
   .section {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-    padding: 22px 24px; margin-bottom: 18px; box-shadow: var(--shadow-card);
+    padding: 22px 24px; margin-bottom: 18px; box-shadow: var(--shadow-card), var(--sheen);
   }
   .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; gap: 12px; flex-wrap: wrap; }
   .section-head h2 { font-size: 0.98rem; font-weight: 600; margin: 0; }
@@ -269,8 +324,15 @@
 
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark">Spend<span class="accent">Gauge</span>AI</div>
-      <div class="brand-sub">self-hosted Claude API cost tracker</div>
+      <svg class="logo-mark" width="30" height="30" viewBox="0 0 28 28" aria-hidden="true">
+        <circle cx="14" cy="14" r="10" fill="none" stroke="var(--surface-sunken)" stroke-width="4"/>
+        <circle cx="14" cy="14" r="10" fill="none" stroke="var(--primary)" stroke-width="4"
+          stroke-linecap="round" stroke-dasharray="42 21" transform="rotate(-90 14 14)"/>
+      </svg>
+      <div class="brand-text">
+        <div class="brand-mark">Spend<span class="accent">Gauge</span>AI</div>
+        <div class="brand-sub">AI FinOps for self-hosted developers</div>
+      </div>
     </div>
     <div class="topbar-right">
       <span class="badge-selfhost"><span class="dot"></span> localhost:8000 · your data</span>
@@ -307,11 +369,11 @@
 
           <div class="hero-readouts">
             <div>
-              <div class="readout-label">Burn rate</div>
+              <div class="readout-label"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z"/></svg>Burn rate</div>
               <div class="readout-value tabular">$1.06<span style="font-size:0.75rem;color:var(--text-muted)">/day</span></div>
             </div>
             <div>
-              <div class="readout-label">Est. runway</div>
+              <div class="readout-label"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>Est. runway</div>
               <div class="readout-value tabular" style="color:var(--good)">~16d</div>
               <div class="readout-note">forecast, not an expiration</div>
             </div>
@@ -359,18 +421,48 @@
 
   <!-- Stat tiles -->
   <div class="grid-tiles">
-    <div class="tile"><div class="t-label">Total Spent</div><div class="t-value tabular">$8.2823</div><div class="t-sub">estimated USD</div></div>
-    <div class="tile"><div class="t-label">Cache Hit Rate</div><div class="t-value tabular">32.9%</div></div>
-    <div class="tile"><div class="t-label">Cache Savings</div><div class="t-value tabular">$1.0980</div><div class="t-sub">vs. no caching</div></div>
-    <div class="tile"><div class="t-label">Input Tokens</div><div class="t-value tabular">1.24M</div></div>
-    <div class="tile"><div class="t-label">Output Tokens</div><div class="t-value tabular">380K</div></div>
-    <div class="tile"><div class="t-label">Web Searches</div><div class="t-value tabular">47</div><div class="t-sub">$0.01 each</div></div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Total Spent</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+      </div>
+      <div class="t-value tabular">$8.2823</div><div class="t-sub">estimated USD</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Cache Hit Rate</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>
+      </div>
+      <div class="t-value tabular">32.9%</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Cache Savings</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z"/></svg>
+      </div>
+      <div class="t-value tabular">$1.0980</div><div class="t-sub">vs. no caching</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Input Tokens</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+      </div>
+      <div class="t-value tabular">1.24M</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Output Tokens</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"/></svg>
+      </div>
+      <div class="t-value tabular">380K</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Web Searches</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
+      </div>
+      <div class="t-value tabular">47</div><div class="t-sub">$0.01 each</div>
+    </div>
   </div>
 
   <!-- Token breakdown + Model split -->
   <div class="split-row">
     <div class="section">
-      <div class="section-head"><h2>Token Breakdown</h2></div>
+      <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>Token Breakdown</h2></div>
       <div class="tbar-row">
         <div class="tbar-label"><span>Input</span><span class="tabular">1.24M</span></div>
         <div class="tbar-bg"><div class="tbar-fill" style="width:100%;background:var(--primary)"></div></div>
@@ -390,7 +482,7 @@
     </div>
 
     <div class="section">
-      <div class="section-head"><h2>Cost by Model</h2></div>
+      <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z"/></svg>Cost by Model</h2></div>
       <div class="donut-wrap">
         <svg width="112" height="112" viewBox="0 0 112 112">
           <circle cx="56" cy="56" r="42" fill="none" stroke="var(--surface-sunken)" stroke-width="16"/>
@@ -418,7 +510,7 @@
   <!-- Daily spend -->
   <div class="section">
     <div class="section-head">
-      <h2>Daily Spend — last 14 days</h2>
+      <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"/></svg>Daily Spend — last 14 days</h2>
       <span class="hint">hover a point for detail</span>
     </div>
     <svg id="daily-svg" width="100%" height="180" style="overflow:visible"></svg>
@@ -428,7 +520,7 @@
   <!-- Cost by Project -->
   <div class="section">
     <div class="section-head">
-      <h2>Cost by Project</h2>
+      <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776"/></svg>Cost by Project</h2>
       <span class="hint">all projects reporting to this instance</span>
     </div>
     <table>
@@ -455,7 +547,7 @@
 
   <!-- Top sessions -->
   <div class="section">
-    <div class="section-head"><h2>Top Sessions by Cost</h2></div>
+    <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155"/></svg>Top Sessions by Cost</h2></div>
     <table>
       <thead><tr><th>Session</th><th class="num">Requests</th><th class="num">Cost</th><th>Last Active</th></tr></thead>
       <tbody>
@@ -469,7 +561,7 @@
 
   <!-- Model detail -->
   <div class="section">
-    <div class="section-head"><h2>Model Detail</h2></div>
+    <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Zm.75-12h9v9h-9v-9Z"/></svg>Model Detail</h2></div>
     <table>
       <thead><tr><th>Model</th><th class="num">Requests</th><th class="num">Cost</th><th>Share</th></tr></thead>
       <tbody>
@@ -490,7 +582,7 @@
   <!-- Cost by tool -->
   <div class="section">
     <div class="section-head">
-      <h2>Cost by Tool</h2>
+      <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"/></svg>Cost by Tool</h2>
       <span class="hint">which tools are being called and what they cost</span>
     </div>
     <table>
