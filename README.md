@@ -46,6 +46,8 @@ import anthropic
 client = wrap(anthropic.Anthropic(), base_url="http://localhost:8000", api_key="...", project="my-app")
 response = client.messages.create(...)   # reports automatically, no other code changes
 ```
+`api_key` above is the credential printed when you first run `spendgaugeai serve` — see
+[Quickstart](#quickstart) below.
 
 **TypeScript/JS** — same pattern:
 
@@ -56,6 +58,8 @@ import Anthropic from "@anthropic-ai/sdk";
 const client = wrap(new Anthropic(), { baseUrl: "http://localhost:8000", apiKey: "...", project: "my-app" });
 const response = await client.messages.create({ ... });   // reports automatically
 ```
+`apiKey`/`api_key` above is the credential printed when you first run `spendgaugeai serve` — see
+[Quickstart](#quickstart) below.
 
 Not yet on npm — `clients/js/` isn't installable as a git subdirectory dependency (npm has no
 support for that), so build it from a clone instead:
