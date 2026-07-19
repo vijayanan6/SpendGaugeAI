@@ -15,9 +15,14 @@ subfolder's own build). `docs/mockup.html`'s CSS was ported into `static/src/inp
 rather than reinterpreted into Tailwind utility classes (Tailwind's role here is the
 standalone-binary build tool + preflight reset, not a rewrite of the hand-tuned CSS) — Vijay has
 frontend design changes to apply on top of this once he's ready, so don't assume the current
-visual pass is final. Not yet done: a real PyPI/npm publish (manual steps Vijay runs when ready,
-per docs/DESIGN.md §9) and the MCP Learning Project dogfooding wire-up (§10, a distinct later
-step against that project's own `api.py`).
+visual pass is final.
+
+The MCP Learning Project dogfooding wire-up (§10) is done — that project's `src/backend/api.py`
+has a best-effort `SpendGaugeAIClient.alog()` call alongside its existing local `usage_log()`,
+gated on `SPENDGAUGEAI_URL`/`SPENDGAUGEAI_API_KEY` plus the `spendgaugeai` package being
+installed, committed there as `e49c23d` and pushed to `origin/main`. That project's own local
+`/usage` dashboard is unaffected. Not yet done: a real PyPI/npm publish (manual steps Vijay runs
+when ready, per docs/DESIGN.md §9).
 
 ## What this project is
 
