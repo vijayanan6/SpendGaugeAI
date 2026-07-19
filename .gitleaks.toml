@@ -1,0 +1,12 @@
+title = "SpendGaugeAI gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known false positives — documentation placeholders, not real secrets"
+regexes = [
+  # README.md's Quickstart section shows what the startup log looks like;
+  # the all-x placeholder happens to match Stripe's sk_live_ key pattern.
+  '''sk_live_x+''',
+]
