@@ -592,16 +592,20 @@ something this project needs to pre-build speculatively.
 - `pyproject.toml`, `hatchling` backend. Deps: `fastapi`, `uvicorn[standard]`, `httpx`,
   `python-dotenv`, `jinja2`. `[project.scripts] spendgaugeai = "spendgaugeai.cli:main"`. Package data
   includes the compiled `static/app.css` and vendored `alpine.min.js`/chart JS — small,
-  version-controllable files, not a `dist/` folder from an npm build.
-- `Dockerfile`: **single-stage** (`python:3.12-slim`) — one `RUN` step downloads the Tailwind
-  standalone binary and compiles `static/app.css`, then the Python package installs normally.
+  version-controllable files, not a `dist/` folder from an npm build. `app.css` is **committed**,
+  not gitignored: `pip install git+https://github.com/...` builds straight from a raw clone with
+  no chance to run a pre-packaging build step, so the compiled CSS has to already be in the repo
+  for that install path to work at all (verified against a real clone — it 404s on the force-
+  include otherwise). Regenerate with `./scripts/build-css.sh` and commit the diff whenever
+  `static/src/input.css` changes, same maintenance model as the already-committed `alpine.min.js`.
+- `Dockerfile`: **single-stage** (`python:3.12-slim`) — one `RUN` step recompiles `static/app.css`
+  via the Tailwind standalone binary (idempotent over the committed copy — keeps the image build
+  self-verifying rather than trusting a stale commit), then the Python package installs normally.
   No Node/npm anywhere in the image or the build process. Plus `docker-compose.yml`, `/data`
   volume for the SQLite file.
 - `.env.example`: `SPENDGAUGEAI_API_KEY`, `DISCORD_WEBHOOK_URL` (optional), `PORT`.
-- PyPI publish is a manual step Vijay runs when ready — not automated here. Compiling
-  `static/app.css` is a one-command precondition before packaging (same standalone Tailwind
-  binary used in Docker), simple enough that it doesn't need CI to own it the way an npm build
-  would have — no `node_modules` state to get stale or out of sync.
+- PyPI publish is a manual step Vijay runs when ready — not automated here. No `node_modules`
+  state to get stale or out of sync either way.
 - **`clients/js/`** — the JS/TS client SDK (§8a), a self-contained package with its own
   `package.json`, TypeScript source, and build step (`tsup` or `tsc`). This is the one place
   Node/npm legitimately exists in the repo — scoped to this subfolder's own dev/build process,

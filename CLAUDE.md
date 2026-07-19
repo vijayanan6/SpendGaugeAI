@@ -66,8 +66,8 @@ SpendGaugeAI/
 │   ├── client.py               # SpendGaugeAIClient — wrap() and .log(), both fail-safe
 │   ├── templates/              # Jinja2: base.html (shared nav/header/theme toggle) + one
 │   │                              template per page (usage.html now, more as pages are added)
-│   └── static/                 # src/input.css (Tailwind source), compiled app.css (build
-│                                  output, gitignored), vendored alpine.min.js, chart JS —
+│   └── static/                 # src/input.css (Tailwind source), compiled app.css (committed
+│                                  build output — see below), vendored alpine.min.js, chart JS —
 │                                  do not hand-edit app.css, it's generated
 ├── clients/js/                # spendgaugeai-client npm package — the ONE place Node/npm
 │   ├── package.json            # legitimately exists in this repo (§8a of DESIGN.md). Scoped
@@ -123,6 +123,13 @@ pytest tests/                                     # backend
   services."
 - **No `notes`/`sessions` tables.** Those were specific to the source project's chat app, not to
   cost tracking. Don't reintroduce them here.
+- **`static/app.css` is committed, not gitignored.** Reversed from the original design (which
+  treated it as a pure build artifact, generated fresh before packaging) once `pip install
+  git+https://github.com/...` needed to work — pip builds straight from a raw clone with no
+  chance to run `scripts/build-css.sh` first, and hatchling's `force-include` errors outright if
+  the file isn't there. Same treatment as the already-committed `alpine.min.js`/chart JS: after
+  editing `static/src/input.css`, re-run `./scripts/build-css.sh` and commit the regenerated
+  `app.css` in the same commit as the source change — don't let it drift out of sync.
 - **Frontend is Jinja2 + Alpine.js + Tailwind (standalone CLI) — not React, not vanilla HTML
   with no reactivity either.** The stack went through two revisions: plain HTML/CSS/JS →
   React (for "competitive UI") → Alpine.js/Jinja2 (once 2-3 more planned pages made clear this
