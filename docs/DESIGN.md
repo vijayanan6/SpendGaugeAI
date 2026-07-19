@@ -628,13 +628,14 @@ client support, streaming, session-scoping via `contextvars`, and correct `tool_
 `server_tool_use` extraction — all specified in §8a rather than left as an implicit gap in the
 flagship integration path · read routes now require Basic Auth, closing the "reads stay open"
 gap from the original design (§4, §5) · env-var-vs-persisted-key precedence made unambiguous —
-the persisted key is dead the moment an env var is set, not a silent fallback (§5).
+the persisted key is dead the moment an env var is set, not a silent fallback (§5) · SQLite file
+permissions now hardened to owner-only `0600` on the db file and its `-wal`/`-shm` siblings, via
+`_harden_db_permissions()` called at the end of `init_db()` — best-effort (Windows can't express
+real POSIX bits), verified `-rw-------` inside a Linux container.
 
 Still genuinely open:
 - Key rotation has no dedicated command — today it's "set a new `SPENDGAUGEAI_API_KEY`
   yourself"; real UX (a `/rotate` endpoint or CLI command) is future work, not v1.
-- No file-permission hardening specified on the SQLite file (e.g. `chmod 600`) — low priority
-  for a single-user local tool, cheap to add when implemented, just not designed yet.
 - Per-project API keys (multi-operator safety) — v1-deferred, not designed yet. The single
   shared key is deliberately proportionate to "one operator, one instance"; revisit if/when
   multiple people sharing one instance becomes a real use case.

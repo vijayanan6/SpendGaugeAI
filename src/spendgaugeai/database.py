@@ -91,6 +91,21 @@ def init_db() -> None:
         """)
         conn.commit()
 
+    _harden_db_permissions()
+
+
+def _harden_db_permissions() -> None:
+    """Restrict the SQLite file (and its WAL/SHM siblings) to owner-only
+    read/write. Best-effort — a chmod failure shouldn't block startup, and on
+    Windows os.chmod can't express real POSIX permissions anyway (see
+    docs/DESIGN.md §11)."""
+    for suffix in ("", "-wal", "-shm"):
+        path = DB_PATH.with_name(DB_PATH.name + suffix)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+
 
 # ── Pricing (USD per 1K tokens) ───────────────────────────────────────────────
 # Manual snapshot — Anthropic's API has no endpoint that returns live pricing, so
