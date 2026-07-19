@@ -61,6 +61,20 @@ const response = await client.messages.create({ ... });   // reports automatical
 `apiKey`/`api_key` above is the credential printed when you first run `spendgaugeai serve` — see
 [Quickstart](#quickstart) below.
 
+**Why one `wrap()` call is enough — what it actually does:** `wrap()` doesn't return a new
+object; it mutates the client you pass it in place, replacing `messages.create`/`messages.stream`
+on that exact instance, then hands the same object back. Since an app almost always builds one
+Anthropic client and reuses it everywhere, patching those two methods on that single instance
+means *every* existing call site in the app — however many there are, wherever they live — is now
+calling the patched version, with zero other code changes. Each patched call: (1) invokes the
+real, original method first, so the actual Claude API call happens exactly as before; (2)
+extracts token counts, tools used, and web-search count from the response; (3) fires off a
+best-effort report to SpendGaugeAI, wrapped in its own try/catch so a SpendGaugeAI outage can
+never throw or break the real request; (4) returns the original response, untouched. Streaming
+works the same way, reporting once the stream completes rather than per-chunk. `npm install`/
+`pip install` alone does nothing by itself — the reporting only starts once `wrap()` is called,
+once, wherever the client gets constructed.
+
 Not yet on npm — `clients/js/` isn't installable as a git subdirectory dependency (npm has no
 support for that), so build it from a clone instead:
 
