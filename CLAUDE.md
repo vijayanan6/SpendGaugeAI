@@ -4,25 +4,32 @@ This file provides guidance to Claude Code when working in this repository.
 
 ## Current status
 
-**Implementation in progress — v1 backend + a first-pass frontend exist and work end-to-end.**
-`docs/DESIGN.md` is the spec and `docs/mockup.html` remains the approved visual reference — still
-read DESIGN.md in full before changing behavior, and if implementation forces a real change to
-the design, update that file rather than letting it silently drift out of date.
+**v1 is done and verified end-to-end, not just "implemented."** Backend, both client SDKs,
+Docker packaging, and `pip install git+https://github.com/vijayanan6/SpendGaugeAI.git` have all
+been run for real (not just read/reviewed) and confirmed working — see the git log for the
+packaging bugs that surfaced and got fixed doing that (`93b6393`, `020ce0f`). `docs/DESIGN.md` is
+still the spec and `docs/mockup.html` remains the approved visual reference — read DESIGN.md in
+full before changing behavior, and if implementation forces a real change to the design, update
+that file rather than letting it silently drift out of date.
 
-Both official client SDKs exist and are tested: Python (`src/spendgaugeai/client.py`) and
-JS/TS (`clients/js/` — the one place Node/npm legitimately exists in this repo, scoped to that
-subfolder's own build). `docs/mockup.html`'s CSS was ported into `static/src/input.css` as-is
-rather than reinterpreted into Tailwind utility classes (Tailwind's role here is the
-standalone-binary build tool + preflight reset, not a rewrite of the hand-tuned CSS) — Vijay has
-frontend design changes to apply on top of this once he's ready, so don't assume the current
-visual pass is final.
+Both official client SDKs exist, are tested, and have their own docs: Python
+(`src/spendgaugeai/client.py`) and JS/TS (`clients/js/` — the one place Node/npm legitimately
+exists in this repo, scoped to that subfolder's own build; see `clients/js/README.md`).
+`docs/mockup.html`'s CSS was ported into `static/src/input.css` as-is rather than reinterpreted
+into Tailwind utility classes (Tailwind's role here is the standalone-binary build tool +
+preflight reset, not a rewrite of the hand-tuned CSS) — Vijay has frontend design changes to
+apply on top of this once he's ready, so don't assume the current visual pass is final.
 
-The MCP Learning Project dogfooding wire-up (§10) is done — that project's `src/backend/api.py`
-has a best-effort `SpendGaugeAIClient.alog()` call alongside its existing local `usage_log()`,
-gated on `SPENDGAUGEAI_URL`/`SPENDGAUGEAI_API_KEY` plus the `spendgaugeai` package being
-installed, committed there as `e49c23d` and pushed to `origin/main`. That project's own local
-`/usage` dashboard is unaffected. Not yet done: a real PyPI/npm publish (manual steps Vijay runs
-when ready, per docs/DESIGN.md §9).
+The MCP Learning Project dogfooding wire-up (§10) is done and actually working — that project's
+`src/backend/api.py` has a best-effort `SpendGaugeAIClient.alog()` call alongside its existing
+local `usage_log()`, gated on `SPENDGAUGEAI_URL`/`SPENDGAUGEAI_API_KEY` plus the `spendgaugeai`
+package being installed, committed there as `e49c23d` and pushed to `origin/main`; its API key
+was found mismatched and fixed this session, verified live (`200 {"logged":true}`) rather than
+just assumed correct. That project's own local `/usage` dashboard is unaffected.
+
+**Only genuinely open items:** the real PyPI/npm publish — manual steps Vijay runs when ready,
+exact commands in `docs/PUBLISHING.md` — and Vijay's own pending frontend redesign pass (not
+started).
 
 ## What this project is
 
@@ -53,6 +60,8 @@ SpendGaugeAI/
 ├── docker-compose.yml
 ├── docs/
 │   ├── DESIGN.md               # the spec — read before implementing
+│   ├── PUBLISHING.md           # exact PyPI/npm publish commands — the runbook for the one
+│   │                              manual step every other doc defers to Vijay
 │   └── mockup.html             # approved visual/interaction reference — unlike a React plan,
 │                                  this one's HTML/CSS/JS carry over closely, split into Jinja2
 │                                  partials + Alpine components rather than reinterpreted
@@ -71,8 +80,10 @@ SpendGaugeAI/
 │                                  do not hand-edit app.css, it's generated
 ├── clients/js/                # spendgaugeai-client npm package — the ONE place Node/npm
 │   ├── package.json            # legitimately exists in this repo (§8a of DESIGN.md). Scoped
-│   ├── src/                    # to this subfolder's own build; does not touch the server's
-│   └── tsup.config.ts          # Node-free runtime/build story.
+│   ├── README.md                # to this subfolder's own build; does not touch the server's
+│   ├── LICENSE                  # Node-free runtime/build story. README + LICENSE are this
+│   ├── src/                     # package's own copies — npm's registry page reads from here,
+│   └── tsup.config.ts           # not the repo root.
 └── tests/
     └── test_app.py
 ```

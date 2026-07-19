@@ -172,7 +172,8 @@ project this was extracted from rather than general to cost tracking.
 ## Design
 
 Full design doc: [`docs/DESIGN.md`](docs/DESIGN.md). Approved visual reference:
-[`docs/mockup.html`](docs/mockup.html).
+[`docs/mockup.html`](docs/mockup.html). Maintainers: the PyPI/npm publish runbook is
+[`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
 ## License
 

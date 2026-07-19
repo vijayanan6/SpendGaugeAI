@@ -605,7 +605,8 @@ something this project needs to pre-build speculatively.
   volume for the SQLite file.
 - `.env.example`: `SPENDGAUGEAI_API_KEY`, `DISCORD_WEBHOOK_URL` (optional), `PORT`.
 - PyPI publish is a manual step Vijay runs when ready — not automated here. No `node_modules`
-  state to get stale or out of sync either way.
+  state to get stale or out of sync either way. Exact commands (build, `twine upload`, `npm
+  publish`, and the fresh-install verification step for each): `docs/PUBLISHING.md`.
 - **`clients/js/`** — the JS/TS client SDK (§8a), a self-contained package with its own
   `package.json`, TypeScript source, and build step (`tsup` or `tsc`). This is the one place
   Node/npm legitimately exists in the repo — scoped to this subfolder's own dev/build process,
