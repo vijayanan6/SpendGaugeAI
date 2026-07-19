@@ -601,8 +601,15 @@ something this project needs to pre-build speculatively.
 - `Dockerfile`: **single-stage** (`python:3.12-slim`) — one `RUN` step recompiles `static/app.css`
   via the Tailwind standalone binary (idempotent over the committed copy — keeps the image build
   self-verifying rather than trusting a stale commit), then the Python package installs normally.
-  No Node/npm anywhere in the image or the build process. Plus `docker-compose.yml`, `/data`
-  volume for the SQLite file.
+  No Node/npm anywhere in the image or the build process. `docker-compose.yml` bind-mounts
+  `./data:/data` for the SQLite file — deliberately a bind mount, not a Docker-managed named
+  volume: a named volume lives in Docker's own hidden storage, so switching between `pip install`
+  and `docker compose up` would silently mean two separate, un-synced databases (found and fixed
+  after exactly that confusion — verified the bind mount makes both paths read/write the identical
+  file). `restart: unless-stopped` on the service, so it survives crashes and daemon restarts —
+  note this does **not** cover a full Docker Desktop restart/reinstall on Windows, which tears
+  down and rebuilds the WSL2 VM rather than triggering the container runtime's own restart-policy
+  path; `docker compose up -d` after one of those is a manual step, not automatic.
 - `.env.example`: `SPENDGAUGEAI_API_KEY`, `DISCORD_WEBHOOK_URL` (optional), `PORT`.
 - PyPI publish is a manual step Vijay runs when ready — not automated here. No `node_modules`
   state to get stale or out of sync either way. Exact commands (build, `twine upload`, `npm

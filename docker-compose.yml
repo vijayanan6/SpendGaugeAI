@@ -7,8 +7,5 @@ services:
       SPENDGAUGEAI_API_KEY: ${SPENDGAUGEAI_API_KEY:-}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
     volumes:
-      - spendgaugeai-data:/data
+      - ./data:/data
     restart: unless-stopped
-
-volumes:
-  spendgaugeai-data:
