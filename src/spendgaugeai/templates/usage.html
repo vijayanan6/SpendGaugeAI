@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}SpendGaugeAI — Usage{% endblock %}
+
+{% block content %}
+<div x-data="usageDashboard()" x-init="init()">
+
+  <!-- Page-scoped controls (project filter needs this page's Alpine data, so it
+       lives here rather than in base.html's shared topbar). -->
+  <div style="display:flex;justify-content:flex-end;gap:10px;margin:-10px 0 14px;flex-wrap:wrap">
+    <select class="pill" x-model="project">
+      <option value="">All projects</option>
+      <template x-for="p in data.by_project" :key="p.project">
+        <option :value="p.project" x-text="p.project + ' — ' + fmtCost(p.cost_usd)"></option>
+      </template>
+    </select>
+    <span class="pill" style="cursor:pointer" @click="load()">↻ Refresh</span>
+  </div>
+
+  <!-- Instrument hero: credit gauge + readouts + balance configuration -->
+  <details class="hero" :class="{'state-warning': statusTier === 'warning', 'state-critical': statusTier === 'critical'}">
+    <summary>
+      <div class="hero-top">
+        <div class="hero-body">
+          <div class="gauge-block">
+            <svg width="128" height="128" viewBox="0 0 128 128">
+              <circle cx="64" cy="64" r="52" fill="none" stroke="var(--surface-sunken)" stroke-width="12"/>
+              <circle cx="64" cy="64" r="52" fill="none" :stroke="statusColorVar" stroke-width="12"
+                stroke-linecap="round" :stroke-dasharray="gaugeCircumference" :stroke-dashoffset="gaugeDashoffset"
+                transform="rotate(-90 64 64)"/>
+              <text x="64" y="60" text-anchor="middle" font-family="var(--font-display)" font-size="15" font-weight="600" fill="var(--text-primary)" x-text="Math.round(remainingPct) + '%'"></text>
+              <text x="64" y="76" text-anchor="middle" font-size="8.5" fill="var(--text-muted)">remaining</text>
+            </svg>
+            <div class="gauge-figure">
+              <div class="gauge-label">Balance remaining</div>
+              <div class="gauge-value tabular" x-text="fmtCost2(remaining)"></div>
+              <div class="gauge-sub"><strong x-text="fmtCost2((data.credit.period_cost_usd || 0))"></strong> spent of <span x-text="fmtCost2(data.credit.starting_balance)"></span> starting balance</div>
+            </div>
+          </div>
+
+          <div class="hero-readouts">
+            <div>
+              <div class="readout-label"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z"/></svg>Burn rate</div>
+              <div class="readout-value tabular"><span x-text="fmtCost2(burnRate.value)"></span><span style="font-size:0.75rem;color:var(--text-muted)">/day<span x-show="burnRate.estimate"> (est.)</span></span></div>
+            </div>
+            <div>
+              <div class="readout-label"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>Est. runway</div>
+              <div class="readout-value tabular" style="color:var(--good)" x-text="runwayText"></div>
+              <div class="readout-note">forecast, not an expiration</div>
+            </div>
+            <div>
+              <div class="readout-label">Total requests</div>
+              <div class="readout-value tabular" x-text="(data.totals.total_requests || 0).toLocaleString()"></div>
+            </div>
+            <div>
+              <div class="readout-label">Alert below</div>
+              <div class="readout-value tabular" x-text="fmtCost2(data.credit.alert_threshold)"></div>
+            </div>
+            <div class="readout-divider"></div>
+            <div class="forecast-row">
+              <div class="forecast-item">30d forecast <strong class="tabular" x-text="forecast(30)"></strong></div>
+              <div class="forecast-item">60d forecast <strong class="tabular" x-text="forecast(60)"></strong></div>
+              <div class="forecast-item">90d forecast <strong class="tabular" x-text="forecast(90)"></strong></div>
+            </div>
+          </div>
+        </div>
+
+        <span class="config-toggle" title="Configure starting balance, alert threshold, and spend-tracking reset">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1 3L5.5 8L10 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Configure
+        </span>
+      </div>
+    </summary>
+
+    <div class="config-panel">
+      <div class="config-field">
+        <label for="cfg-balance">Starting balance (USD)</label>
+        <input type="number" id="cfg-balance" x-model="cfgBalance" step="0.01" min="0" class="tabular" />
+      </div>
+      <div class="config-field">
+        <label for="cfg-alert">Alert below (USD)</label>
+        <input type="number" id="cfg-alert" x-model="cfgAlert" step="0.10" min="0" class="tabular" />
+      </div>
+      <label class="config-check" title="Starts fresh spend tracking from now. Historical charts and tables are never deleted — only the remaining/burn-rate math above resets.">
+        <input type="checkbox" x-model="cfgReset" />
+        Reset spend tracking (start fresh from now)
+      </label>
+      <button class="btn-save" type="button" @click="saveConfig()" :disabled="saving" x-text="saving ? 'Saving…' : 'Save'"></button>
+      <div class="prev-period-note" x-show="data.credit.prev_period_days > 0">
+        Previous period: <span x-text="fmtCost(data.credit.prev_period_cost_usd)"></span> over <span x-text="data.credit.prev_period_days"></span> day(s) — reset <span x-text="fmtDate(data.credit.prev_period_end)"></span>
+      </div>
+    </div>
+  </details>
+
+  <!-- Stat tiles -->
+  <div class="grid-tiles">
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Total Spent</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+      </div>
+      <div class="t-value tabular" x-text="fmtCost(data.totals.total_cost_usd)"></div><div class="t-sub">estimated USD</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Cache Hit Rate</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>
+      </div>
+      <div class="t-value tabular" x-text="cacheHitRatePct + '%'"></div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Cache Savings</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z"/></svg>
+      </div>
+      <div class="t-value tabular" x-text="fmtCost(cacheSavings)"></div><div class="t-sub">vs. no caching</div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Input Tokens</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+      </div>
+      <div class="t-value tabular" x-text="fmtTokens(data.totals.total_input)"></div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Output Tokens</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"/></svg>
+      </div>
+      <div class="t-value tabular" x-text="fmtTokens(data.totals.total_output)"></div>
+    </div>
+    <div class="tile">
+      <div class="t-icon-row"><div class="t-label">Web Searches</div>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
+      </div>
+      <div class="t-value tabular" x-text="data.totals.total_web_searches || 0"></div><div class="t-sub">$0.01 each</div>
+    </div>
+  </div>
+
+  <!-- Token breakdown + Model split -->
+  <div class="split-row">
+    <div class="section">
+      <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>Token Breakdown</h2></div>
+      <template x-for="bar in tokenBars" :key="bar.label">
+        <div class="tbar-row">
+          <div class="tbar-label"><span x-text="bar.label"></span><span class="tabular" x-text="fmtTokens(bar.val)"></span></div>
+          <div class="tbar-bg"><div class="tbar-fill" :style="'width:' + bar.pct + '%;background:' + bar.color"></div></div>
+        </div>
+      </template>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z"/></svg>Cost by Model</h2></div>
+      <div class="donut-wrap">
+        <svg id="model-donut-svg" width="112" height="112" viewBox="0 0 112 112">
+          <circle cx="56" cy="56" r="42" fill="none" stroke="var(--surface-sunken)" stroke-width="16"/>
+          <g id="donut-arcs"></g>
+          <text x="56" y="52" text-anchor="middle" font-family="var(--font-display)" font-size="13" font-weight="600" fill="var(--text-primary)" x-text="fmtCost2(data.totals.total_cost_usd)"></text>
+          <text x="56" y="66" text-anchor="middle" font-size="7.5" fill="var(--text-muted)">total cost</text>
+        </svg>
+        <div class="legend">
+          <template x-for="seg in donutSegments" :key="seg.model">
+            <div class="legend-item">
+              <span class="legend-dot" :style="'background:' + seg.color"></span>
+              <div>
+                <div class="l-name" x-text="modelLabel(seg.model) + ' — ' + seg.pct + '%'"></div>
+                <div class="l-sub" x-text="seg.requests + ' req · ' + fmtCost(seg.cost_usd)"></div>
+              </div>
+            </div>
+          </template>
+          <div class="l-sub" x-show="donutSegments.length === 0">No data yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily spend -->
+  <div class="section">
+    <div class="section-head">
+      <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"/></svg>Daily Spend — last 14 days</h2>
+      <span class="hint">hover a point for detail</span>
+    </div>
+    <svg id="daily-svg" width="100%" height="180" style="overflow:visible"></svg>
+    <div class="chart-tooltip" id="chart-tooltip"></div>
+  </div>
+
+  <!-- Cost by Project -->
+  <div class="section">
+    <div class="section-head">
+      <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776"/></svg>Cost by Project</h2>
+      <span class="hint">all projects reporting to this instance</span>
+    </div>
+    <table>
+      <thead><tr><th>Project</th><th class="num">Requests</th><th class="num">Cost</th><th>Share</th><th>Last Active</th></tr></thead>
+      <tbody>
+        <template x-for="p in data.by_project" :key="p.project">
+          <tr>
+            <td><strong x-text="p.project"></strong></td>
+            <td class="num tabular" x-text="p.requests.toLocaleString()"></td>
+            <td class="num tabular" x-text="fmtCost(p.cost_usd)"></td>
+            <td style="min-width:120px">
+              <span x-text="sharePct(p.cost_usd) + '%'"></span>
+              <div class="share-bar"><div class="share-fill" :style="'width:' + sharePct(p.cost_usd) + '%;background:var(--primary)'"></div></div>
+            </td>
+            <td style="color:var(--text-muted);font-size:0.78rem" x-text="fmtDate(p.last_at)"></td>
+          </tr>
+        </template>
+        <tr x-show="data.by_project.length === 0"><td colspan="5" style="color:var(--text-muted)">No data yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Top sessions -->
+  <div class="section">
+    <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155"/></svg>Top Sessions by Cost</h2></div>
+    <table>
+      <thead><tr><th>Session</th><th class="num">Requests</th><th class="num">Cost</th><th>Last Active</th></tr></thead>
+      <tbody>
+        <template x-for="(s, i) in data.by_session" :key="s.session_id">
+          <tr>
+            <td><span class="session-id" x-text="'#' + (i + 1) + ' ' + s.session_id.slice(0, 12) + '…'"></span></td>
+            <td class="num tabular" x-text="s.requests"></td>
+            <td class="num tabular" x-text="fmtCost(s.cost_usd)"></td>
+            <td style="color:var(--text-muted);font-size:0.78rem" x-text="fmtDate(s.last_at)"></td>
+          </tr>
+        </template>
+        <tr x-show="data.by_session.length === 0"><td colspan="4" style="color:var(--text-muted)">No data yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Model detail -->
+  <div class="section">
+    <div class="section-head"><h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Zm.75-12h9v9h-9v-9Z"/></svg>Model Detail</h2></div>
+    <table>
+      <thead><tr><th>Model</th><th class="num">Requests</th><th class="num">Cost</th><th>Share</th></tr></thead>
+      <tbody>
+        <template x-for="(m, i) in data.by_model" :key="m.model">
+          <tr>
+            <td><span class="model-chip" :style="'background:color-mix(in srgb, ' + modelColor(i) + ' 16%, transparent);color:' + modelColor(i)"><span class="dot" :style="'background:' + modelColor(i)"></span><span x-text="modelLabel(m.model)"></span></span> <span style="font-size:0.76rem;color:var(--text-muted)" x-text="m.model"></span></td>
+            <td class="num tabular" x-text="m.requests"></td>
+            <td class="num tabular" x-text="fmtCost(m.cost_usd)"></td>
+            <td style="width:130px">
+              <span x-text="sharePct(m.cost_usd) + '%'"></span>
+              <div class="share-bar"><div class="share-fill" :style="'width:' + sharePct(m.cost_usd) + '%;background:' + modelColor(i)"></div></div>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="data.by_model.length === 0"><td colspan="4" style="color:var(--text-muted)">No data yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Cost by tool -->
+  <div class="section">
+    <div class="section-head">
+      <h2><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"/></svg>Cost by Tool</h2>
+      <span class="hint">which tools are being called and what they cost</span>
+    </div>
+    <table>
+      <thead><tr><th>Tool</th><th class="num">Calls</th><th class="num">Total Cost</th><th class="num">Avg / Call</th><th>Frequency</th></tr></thead>
+      <tbody>
+        <template x-for="(tool, i) in data.by_tool" :key="tool.tool_name">
+          <tr>
+            <td><span class="tool-swatch" :style="'background:' + modelColor(i)"></span><strong x-text="tool.tool_name"></strong></td>
+            <td class="num tabular" x-text="tool.calls"></td>
+            <td class="num tabular" x-text="fmtCost(tool.cost_usd)"></td>
+            <td class="num tabular" style="color:var(--text-secondary)" x-text="fmtCost(tool.avg_cost_usd)"></td>
+            <td style="min-width:110px">
+              <span x-text="toolFreqPct(tool.calls) + '%'"></span>
+              <div class="share-bar"><div class="share-fill" :style="'width:' + toolFreqPct(tool.calls) + '%;background:' + modelColor(i)"></div></div>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="data.by_tool.length === 0"><td colspan="5" style="color:var(--text-muted)">No data yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pricing-note">
+    <strong>Pricing (estimates only):</strong>
+    Haiku — $0.001/1K input · $0.005/1K output · $0.0001/1K cache read &nbsp;|&nbsp;
+    Sonnet — $0.003/1K input · $0.015/1K output · $0.0003/1K cache read &nbsp;|&nbsp;
+    Verify exact spend at <strong>console.anthropic.com</strong>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/charts.js"></script>
+<script src="/static/dashboard.js"></script>
+{% endblock %}

@@ -1,0 +1,13 @@
+.git
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+tests/
+clients/
+docs/
+.env
+.env.*
+!.env.example
+.tailwind-bin/

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" x-data="appShell()" x-init="initTheme()" :data-theme="theme">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{% block title %}SpendGaugeAI{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css" />
+<script defer src="/static/alpine.min.js"></script>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="brand">
+      <svg class="logo-mark" width="30" height="30" viewBox="0 0 28 28" aria-hidden="true">
+        <circle cx="14" cy="14" r="10" fill="none" stroke="var(--surface-sunken)" stroke-width="4"/>
+        <circle cx="14" cy="14" r="10" fill="none" stroke="var(--primary)" stroke-width="4"
+          stroke-linecap="round" stroke-dasharray="42 21" transform="rotate(-90 14 14)"/>
+      </svg>
+      <div class="brand-text">
+        <div class="brand-mark">Spend<span class="accent">Gauge</span>AI</div>
+        <div class="brand-sub">AI FinOps for self-hosted developers</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="badge-selfhost"><span class="dot"></span> self-hosted · your data</span>
+      {% block nav_extra %}{% endblock %}
+      <span class="pill" style="cursor:pointer" @click="toggleTheme()" title="Toggle light/dark theme">
+        <span x-text="theme === 'dark' ? '☀ Light' : '☾ Dark'"></span>
+      </span>
+    </div>
+  </div>
+
+  {% block content %}{% endblock %}
+
+  <div class="footer-note">SpendGaugeAI v0.1.0 — self-hosted, single binary, your data never leaves this machine.</div>
+
+<script>
+  function appShell() {
+    return {
+      theme: 'light',
+      initTheme() {
+        const stored = localStorage.getItem('spendgaugeai-theme');
+        this.theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      },
+      toggleTheme() {
+        this.theme = this.theme === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('spendgaugeai-theme', this.theme);
+      },
+    };
+  }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

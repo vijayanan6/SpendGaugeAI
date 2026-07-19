@@ -4,13 +4,20 @@ This file provides guidance to Claude Code when working in this repository.
 
 ## Current status
 
-**Design phase — no implementation exists yet.** `docs/DESIGN.md` is the approved design and
-`docs/mockup.html` is the approved visual reference. Do not scaffold or write implementation
-code (`pyproject.toml`, `src/spendgaugeai/*.py`, `Dockerfile`, tests) until explicitly asked to
-start the build — Vijay has deliberately sequenced design-and-hold before implementation on
-this project. When that goes ahead, treat `docs/DESIGN.md` as the spec: read it in full before
-writing code, and if implementation forces a real change to the design, update that file rather
-than letting it silently drift out of date.
+**Implementation in progress — v1 backend + a first-pass frontend exist and work end-to-end.**
+`docs/DESIGN.md` is the spec and `docs/mockup.html` remains the approved visual reference — still
+read DESIGN.md in full before changing behavior, and if implementation forces a real change to
+the design, update that file rather than letting it silently drift out of date.
+
+Both official client SDKs exist and are tested: Python (`src/spendgaugeai/client.py`) and
+JS/TS (`clients/js/` — the one place Node/npm legitimately exists in this repo, scoped to that
+subfolder's own build). `docs/mockup.html`'s CSS was ported into `static/src/input.css` as-is
+rather than reinterpreted into Tailwind utility classes (Tailwind's role here is the
+standalone-binary build tool + preflight reset, not a rewrite of the hand-tuned CSS) — Vijay has
+frontend design changes to apply on top of this once he's ready, so don't assume the current
+visual pass is final. Not yet done: a real PyPI/npm publish (manual steps Vijay runs when ready,
+per docs/DESIGN.md §9) and the MCP Learning Project dogfooding wire-up (§10, a distinct later
+step against that project's own `api.py`).
 
 ## What this project is
 

@@ -1,0 +1,14 @@
+services:
+  spendgaugeai:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SPENDGAUGEAI_API_KEY: ${SPENDGAUGEAI_API_KEY:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    volumes:
+      - spendgaugeai-data:/data
+    restart: unless-stopped
+
+volumes:
+  spendgaugeai-data:

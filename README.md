@@ -6,9 +6,11 @@ and get alerted before you run out. No account, no SDK wrapping — your app POS
 after each call, SpendGaugeAI computes cost, enforces the budget policy you set, and optionally
 pings Discord when something needs attention.
 
-> **Status: design phase.** The architecture, data model, API contract, and UI are designed and
-> signed off (see [`docs/DESIGN.md`](docs/DESIGN.md) and the approved visual mockup at
-> [`docs/mockup.html`](docs/mockup.html)). Implementation hasn't started yet.
+> **Status: v1 implementation working end-to-end.** Backend (auth, ingestion, credit tracking,
+> Discord alerts), both official client SDKs (Python and JS/TS), a first-pass Jinja2/Alpine.js
+> dashboard, Docker packaging, and tests are all in place and verified — see
+> [`docs/DESIGN.md`](docs/DESIGN.md) for the spec and [`docs/mockup.html`](docs/mockup.html) for
+> the approved visual reference. The dashboard's visual pass is still expected to change.
 
 ## Why
 
