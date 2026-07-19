@@ -57,6 +57,18 @@ const client = wrap(new Anthropic(), { baseUrl: "http://localhost:8000", apiKey:
 const response = await client.messages.create({ ... });   // reports automatically
 ```
 
+Not yet on npm — `clients/js/` isn't installable as a git subdirectory dependency (npm has no
+support for that), so build it from a clone instead:
+
+```bash
+git clone https://github.com/vijayanan6/SpendGaugeAI.git
+cd SpendGaugeAI/clients/js && npm install && npm run build
+npm pack   # produces spendgaugeai-client-<version>.tgz
+cd /path/to/your-app && npm install /path/to/SpendGaugeAI/clients/js/spendgaugeai-client-*.tgz
+```
+
+(Once published: `npm install spendgaugeai-client`.)
+
 **Any other language** — no SDK needed, just the raw contract:
 
 ```bash
@@ -73,12 +85,16 @@ method for apps that want more control than auto-wrapping gives them (see
 the cost server-side (see [§6](docs/DESIGN.md#6-cost-calculation--server-side-not-client-side)
 for why) and it shows up on the dashboard immediately.
 
-## Quickstart (once built)
+## Quickstart
+
+Not yet on PyPI — install straight from GitHub for now:
 
 ```bash
-pip install spendgaugeai
+pip install git+https://github.com/vijayanan6/SpendGaugeAI.git
 spendgaugeai serve
 ```
+
+(Once published: `pip install spendgaugeai`.)
 
 First run prints a generated credential once:
 ```
