@@ -177,3 +177,54 @@ def test_static_serves_existing_file(client):
 def test_static_404_for_missing_file(client):
     res = client.get("/static/does-not-exist.js", auth=BASIC)
     assert res.status_code == 404
+
+
+def test_docs_routes_are_disabled(client):
+    # Regression: FastAPI's auto-registered docs previously bypassed auth
+    # entirely (no dependency covers app-internal routes).
+    assert client.get("/docs").status_code == 404
+    assert client.get("/redoc").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_usage_credit_accepts_basic_auth_from_dashboard(client):
+    # Regression: the dashboard's Save button only ever has a cached Basic
+    # credential (from loading /usage), never a Bearer token — it must work.
+    res = client.post("/usage/credit", json={"starting_balance": 30.0}, auth=BASIC)
+    assert res.status_code == 200
+    data = client.get("/usage/data", auth=BASIC).json()
+    assert data["credit"]["starting_balance"] == 30.0
+
+
+def test_usage_credit_rejects_wrong_basic_auth(client):
+    res = client.post(
+        "/usage/credit", json={"starting_balance": 10}, auth=("spendgaugeai", "wrong-key"),
+    )
+    assert res.status_code == 401
+
+
+def test_max_body_size_rejects_invalid_content_length_header(client):
+    res = client.post(
+        "/usage/log",
+        content=b'{"model": "claude-sonnet-4-6"}',
+        headers={**BEARER, "Content-Type": "application/json", "Content-Length": "not-a-number"},
+    )
+    assert res.status_code == 400
+
+
+def test_max_body_size_rejects_oversized_chunked_body_without_content_length(client):
+    # Regression: the size check previously only looked at the Content-Length
+    # header, so a chunked-encoded request (no Content-Length header at all)
+    # bypassed the 64KB cap entirely. A generator body makes httpx send
+    # Transfer-Encoding: chunked with no Content-Length, exercising that path.
+    from spendgaugeai.app import MAX_BODY_SIZE
+
+    def body_stream():
+        chunk = b"x" * 8192
+        total = 0
+        while total < MAX_BODY_SIZE + 8192:
+            total += len(chunk)
+            yield chunk
+
+    res = client.post("/usage/log", content=body_stream(), headers=BEARER)
+    assert res.status_code == 413

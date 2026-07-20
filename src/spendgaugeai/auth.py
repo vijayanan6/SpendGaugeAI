@@ -86,3 +86,29 @@ async def require_basic(creds: HTTPBasicCredentials = Depends(_basic_scheme)) ->
             detail="Invalid credentials",
             headers={"WWW-Authenticate": 'Basic realm="SpendGaugeAI"'},
         )
+
+
+async def require_bearer_or_basic(
+    bearer_creds=Depends(_bearer_scheme),
+    basic_creds: HTTPBasicCredentials | None = Depends(_basic_scheme),
+) -> None:
+    """POST /usage/credit is called both by scripts (Bearer, same as
+    /usage/log) and by the dashboard's browser JS — which only has the
+    Basic-Auth credential the browser cached from loading /usage, since JS
+    can never read that credential back out to set a Bearer header itself.
+    Accept either scheme against the one shared key rather than inventing a
+    login/session/cookie flow for the browser side."""
+    active_key = get_active_api_key()
+    if bearer_creds is not None and secrets.compare_digest(bearer_creds.credentials, active_key):
+        return
+    if (
+        basic_creds is not None
+        and secrets.compare_digest(basic_creds.username, BASIC_USERNAME)
+        and secrets.compare_digest(basic_creds.password, active_key)
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

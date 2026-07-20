@@ -5,14 +5,16 @@ Every route except /health requires a credential — Bearer for machine calls,
 Basic for browser access, one shared secret behind both (see auth.py / §5).
 """
 import time
+import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import alerts, auth, database
@@ -31,8 +33,32 @@ _rate_limit_buckets: dict[str, deque] = defaultdict(deque)
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
-        if content_length is not None and int(content_length) > MAX_BODY_SIZE:
-            return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header"})
+            if declared_size > MAX_BODY_SIZE:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+
+        # Content-Length is absent for chunked-encoded requests, so the check
+        # above alone can be bypassed — buffer the body ourselves, bounded by
+        # MAX_BODY_SIZE, and reject before it ever reaches the route handler.
+        # Setting request._body (rather than raising mid-stream) is the
+        # pattern Starlette's own _CachedRequest expects from middleware that
+        # consumes the body early — it forwards exactly this buffered value
+        # downstream, and avoids an exception raised from inside a custom
+        # receive callable getting mangled by BaseHTTPMiddleware's internal
+        # anyio task group (which wraps it, losing its HTTPException type).
+        chunks: list[bytes] = []
+        received = 0
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > MAX_BODY_SIZE:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+            chunks.append(chunk)
+        request._body = b"".join(chunks)
+
         return await call_next(request)
 
 
@@ -40,7 +66,16 @@ async def enforce_rate_limit(request: Request) -> None:
     """Simple in-memory sliding-window limiter, keyed by the raw Authorization
     header value. In-memory/resets-on-restart is an accepted trade-off for a
     single self-hosted process (docs/DESIGN.md §4) — not meant to survive a
-    multi-process deployment, only to blunt a single runaway client."""
+    multi-process deployment, only to blunt a single runaway client.
+
+    Must run AFTER an auth dependency in a route's `dependencies=[...]` list
+    (FastAPI resolves them in order), not before — keying on the raw header
+    pre-validation would let unauthenticated requests with a different bogus
+    token each time grow this dict forever, an unbounded-memory DoS vector
+    from traffic that was never going to be accepted anyway. Since there is
+    exactly one valid key server-wide, keying only after auth succeeds keeps
+    this dict's real size bounded to 1 entry.
+    """
     key = request.headers.get("authorization", "anonymous")
     now = time.monotonic()
     bucket = _rate_limit_buckets[key]
@@ -66,7 +101,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="SpendGaugeAI", lifespan=lifespan)
+app = FastAPI(title="SpendGaugeAI", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(MaxBodySizeMiddleware)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -107,11 +142,11 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/usage/log", dependencies=[Depends(enforce_rate_limit), Depends(auth.require_bearer)])
-async def post_usage_log(req: UsageLogRequest):
-    import uuid
+@app.post("/usage/log", dependencies=[Depends(auth.require_bearer), Depends(enforce_rate_limit)])
+async def post_usage_log(req: UsageLogRequest, background_tasks: BackgroundTasks):
     session_id = req.session_id or str(uuid.uuid4())
-    cost = database.usage_log(
+    cost = await run_in_threadpool(
+        database.usage_log,
         session_id=session_id,
         model=req.model,
         input_tokens=req.input_tokens,
@@ -122,13 +157,21 @@ async def post_usage_log(req: UsageLogRequest):
         project=req.project,
         web_search_requests=req.web_search_requests,
     )
-    await alerts.run_alert_checks()
+    # Backgrounded, not awaited inline: alerts.run_alert_checks() can chain a
+    # real outbound Discord POST (10s timeout) plus several DB reads. Alerts
+    # are documented best-effort — they must never add latency to the caller's
+    # response, which for wrap()'s callers is meant to be near-instant.
+    background_tasks.add_task(alerts.run_alert_checks)
     return {"logged": True, "cost_usd": cost}
 
 
-@app.post("/usage/credit", dependencies=[Depends(auth.require_bearer)])
+@app.post(
+    "/usage/credit",
+    dependencies=[Depends(auth.require_bearer_or_basic), Depends(enforce_rate_limit)],
+)
 async def post_usage_credit(req: CreditRequest):
-    database.credit_set(
+    await run_in_threadpool(
+        database.credit_set,
         starting_balance=req.starting_balance,
         alert_threshold=req.alert_threshold,
         reset=req.reset,
@@ -139,8 +182,8 @@ async def post_usage_credit(req: CreditRequest):
 
 @app.get("/usage/data", dependencies=[Depends(auth.require_basic)])
 async def get_usage_data(project: str | None = Query(default=None)):
-    data = database.usage_summary(project=project)
-    data["credit"] = database.credit_status(project=project)
+    data = await run_in_threadpool(database.usage_summary, project=project)
+    data["credit"] = await run_in_threadpool(database.credit_status, project=project)
     return data
 
 

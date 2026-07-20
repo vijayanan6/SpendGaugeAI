@@ -69,11 +69,15 @@ function usageDashboard() {
 
       this.saving = true;
       try {
-        await fetch('/usage/credit', {
+        const res = await fetch('/usage/credit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ starting_balance: balance, alert_threshold: alertThreshold, reset: this.cfgReset }),
         });
+        if (!res.ok) {
+          alert('Failed to save (' + res.status + '). Your changes were not applied.');
+          return;
+        }
         this.cfgReset = false;
         await this.load();
       } finally {
