@@ -81,8 +81,12 @@ async def _maybe_send_low_credit_alert() -> None:
     if starting_balance <= 0:
         return  # no balance configured — nothing to alert on
 
-    alert_threshold = cfg.get("alert_threshold") or 1.0
-    warning_threshold = cfg.get("warning_threshold") or 5.0
+    alert_threshold = cfg.get("alert_threshold")
+    if alert_threshold is None:
+        alert_threshold = 1.0
+    warning_threshold = cfg.get("warning_threshold")
+    if warning_threshold is None:
+        warning_threshold = 5.0
     remaining = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
 
     if remaining <= alert_threshold:
