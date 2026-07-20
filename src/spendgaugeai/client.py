@@ -137,6 +137,139 @@ def _report_kwargs(message, model: str) -> dict:
     }
 
 
+class _SyncRawStreamWrapper:
+    """Wraps the raw event iterator returned by `messages.create(stream=True,
+    ...)` — the low-level streaming path, distinct from `messages.stream()`.
+    Forwards every event unchanged; accumulates usage/tool info from the
+    stream's own event types (message_start, content_block_start,
+    message_delta) and reports once exhausted, in a finally, so it fires
+    whether the caller consumes the whole stream, breaks early, or the
+    stream errors. Without this, `create(..., stream=True)` silently
+    reported zero cost — usage/content only populate on `.stream()`'s
+    accumulated final message, not on the raw event objects this path
+    yields."""
+
+    def __init__(self, stream, spendgauge: SpendGaugeAIClient, model: str):
+        self._stream = stream
+        self._spendgauge = spendgauge
+        self._model = model
+        self._input_tokens = 0
+        self._cache_write_tokens = 0
+        self._cache_read_tokens = 0
+        self._output_tokens = 0
+        self._web_search_requests = 0
+        self._tools_used: list[str] = []
+
+    def _absorb(self, event) -> None:
+        event_type = getattr(event, "type", None)
+        if event_type == "message_start":
+            message = getattr(event, "message", None)
+            self._model = getattr(message, "model", None) or self._model
+            usage = getattr(message, "usage", None)
+            self._input_tokens = getattr(usage, "input_tokens", 0) or 0
+            self._cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            self._cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+        elif event_type == "content_block_start":
+            block = getattr(event, "content_block", None)
+            if getattr(block, "type", None) == "tool_use":
+                name = getattr(block, "name", None)
+                if name:
+                    self._tools_used.append(name)
+        elif event_type == "message_delta":
+            usage = getattr(event, "usage", None)
+            if usage is not None:
+                self._output_tokens = getattr(usage, "output_tokens", None) or self._output_tokens
+                server_tool_use = getattr(usage, "server_tool_use", None)
+                self._web_search_requests = getattr(server_tool_use, "web_search_requests", None) or self._web_search_requests
+
+    def _report(self) -> None:
+        self._spendgauge.log(
+            model=self._model,
+            input_tokens=self._input_tokens,
+            cache_write_tokens=self._cache_write_tokens,
+            cache_read_tokens=self._cache_read_tokens,
+            output_tokens=self._output_tokens,
+            web_search_requests=self._web_search_requests,
+            tools_used=self._tools_used,
+        )
+
+    def __iter__(self):
+        try:
+            for event in self._stream:
+                self._absorb(event)
+                yield event
+        finally:
+            try:
+                self._report()
+            except Exception as e:
+                logger.debug(f"[spendgaugeai] stream report failed: {e}")
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+class _AsyncRawStreamWrapper:
+    """Async counterpart of `_SyncRawStreamWrapper` for `AsyncAnthropic`."""
+
+    def __init__(self, stream, spendgauge: SpendGaugeAIClient, model: str):
+        self._stream = stream
+        self._spendgauge = spendgauge
+        self._model = model
+        self._input_tokens = 0
+        self._cache_write_tokens = 0
+        self._cache_read_tokens = 0
+        self._output_tokens = 0
+        self._web_search_requests = 0
+        self._tools_used: list[str] = []
+
+    def _absorb(self, event) -> None:
+        event_type = getattr(event, "type", None)
+        if event_type == "message_start":
+            message = getattr(event, "message", None)
+            self._model = getattr(message, "model", None) or self._model
+            usage = getattr(message, "usage", None)
+            self._input_tokens = getattr(usage, "input_tokens", 0) or 0
+            self._cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            self._cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+        elif event_type == "content_block_start":
+            block = getattr(event, "content_block", None)
+            if getattr(block, "type", None) == "tool_use":
+                name = getattr(block, "name", None)
+                if name:
+                    self._tools_used.append(name)
+        elif event_type == "message_delta":
+            usage = getattr(event, "usage", None)
+            if usage is not None:
+                self._output_tokens = getattr(usage, "output_tokens", None) or self._output_tokens
+                server_tool_use = getattr(usage, "server_tool_use", None)
+                self._web_search_requests = getattr(server_tool_use, "web_search_requests", None) or self._web_search_requests
+
+    async def _report(self) -> None:
+        await self._spendgauge.alog(
+            model=self._model,
+            input_tokens=self._input_tokens,
+            cache_write_tokens=self._cache_write_tokens,
+            cache_read_tokens=self._cache_read_tokens,
+            output_tokens=self._output_tokens,
+            web_search_requests=self._web_search_requests,
+            tools_used=self._tools_used,
+        )
+
+    async def __aiter__(self):
+        try:
+            async for event in self._stream:
+                self._absorb(event)
+                yield event
+        finally:
+            try:
+                await self._report()
+            except Exception as e:
+                logger.debug(f"[spendgaugeai] stream report failed: {e}")
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 class _SyncStreamWrapper:
     """Wraps the context manager returned by `messages.stream(...)`. Forwards
     every event unchanged; reports from the final accumulated message once the
@@ -201,6 +334,12 @@ def wrap(anthropic_client, *, base_url: str, api_key: str, project: str = "defau
         @functools.wraps(original_create)
         async def patched_create(*args, **kwargs):
             response = await original_create(*args, **kwargs)
+            # stream=True routes through the raw event iterator (no populated
+            # .usage/.content on `response` itself) — distinct from .stream(),
+            # which returns a context manager. Report via the wrapper instead
+            # of _report_kwargs(response, ...), which would silently log zeros.
+            if kwargs.get("stream"):
+                return _AsyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
             try:
                 await spendgauge.alog(**_report_kwargs(response, kwargs.get("model", "unknown")))
             except Exception as e:
@@ -215,6 +354,8 @@ def wrap(anthropic_client, *, base_url: str, api_key: str, project: str = "defau
         @functools.wraps(original_create)
         def patched_create(*args, **kwargs):
             response = original_create(*args, **kwargs)
+            if kwargs.get("stream"):
+                return _SyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
             try:
                 spendgauge.log(**_report_kwargs(response, kwargs.get("model", "unknown")))
             except Exception as e:

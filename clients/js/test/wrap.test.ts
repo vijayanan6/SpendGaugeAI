@@ -101,6 +101,51 @@ describe("wrap()", () => {
     expect(body.tools_used).toEqual(["search_docs"]);
   });
 
+  it("reports real usage from create({ stream: true }) instead of silently logging zero", async () => {
+    // Regression: create({ stream: true }) returns a raw async-iterable of
+    // SSE events, not a populated Message — reading .usage/.content directly
+    // off it (as the non-streaming path does) silently produced an all-zero
+    // report with no error anywhere.
+    const rawEvents = [
+      {
+        type: "message_start",
+        message: {
+          model: "claude-sonnet-4-6",
+          usage: { input_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 20 },
+        },
+      },
+      { type: "content_block_start", content_block: { type: "tool_use", name: "search_docs" } },
+      { type: "message_delta", usage: { output_tokens: 50, server_tool_use: { web_search_requests: 2 } } },
+      { type: "message_stop" },
+    ];
+    const fakeRawStream = {
+      [Symbol.asyncIterator]: async function* () {
+        for (const event of rawEvents) yield event;
+      },
+    };
+    const fakeClient: WrappableAnthropicClient = {
+      messages: {
+        create: vi.fn().mockResolvedValue(fakeRawStream),
+        stream: vi.fn(),
+      },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    const stream = await wrapped.messages.create({ model: "claude-sonnet-4-6", stream: true });
+    const seen = [];
+    for await (const event of stream) seen.push(event);
+    expect(seen).toEqual(rawEvents); // every event forwarded unchanged
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.model).toBe("claude-sonnet-4-6");
+    expect(body.input_tokens).toBe(100);
+    expect(body.output_tokens).toBe(50);
+    expect(body.cache_read_tokens).toBe(20);
+    expect(body.web_search_requests).toBe(2);
+    expect(body.tools_used).toEqual(["search_docs"]);
+  });
+
   it("swallows a stream that errors before completion without reporting", async () => {
     const fakeStream = {
       finalMessage: vi.fn().mockRejectedValue(new Error("stream aborted")),
