@@ -11,6 +11,8 @@ project never needed this because it only ever had one writer (itself).
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -18,11 +20,19 @@ DB_PATH = Path(os.environ.get("SPENDGAUGEAI_DB_PATH", "./data/spendgaugeai.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-def get_connection() -> sqlite3.Connection:
-    """Open a connection with row_factory so rows behave like dicts."""
+@contextmanager
+def get_connection() -> Iterator[sqlite3.Connection]:
+    """Open a connection with row_factory so rows behave like dicts, closed on
+    exit. sqlite3.Connection's own context manager only commits/rolls back —
+    it never closes the connection — so every caller (which already commits
+    explicitly on write paths) previously left connections open, relying on
+    GC to close them eventually."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
