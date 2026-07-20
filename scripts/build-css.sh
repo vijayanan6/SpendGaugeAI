@@ -31,18 +31,28 @@ ext=""
 bin_name="tailwindcss-${plat}-${tarch}${ext}"
 bin_path="$BIN_DIR/$bin_name"
 
+# Opt-in only, same as SPENDGAUGEAI_INSECURE_SSL in alerts.py -- stays secure by
+# default (this script ships in a published product, not a personal tool). Set
+# INSECURE_SSL_DOWNLOADS=1 only on a machine where outbound HTTPS genuinely
+# fails CERTIFICATE_VERIFY_FAILED regardless of CA bundle (corporate cert
+# chain / network-monitoring driver intercepting TLS).
+curl_flags="-sL"
+if [ "${INSECURE_SSL_DOWNLOADS:-}" = "1" ]; then
+  curl_flags="-sLk"
+fi
+
 mkdir -p "$BIN_DIR" "$STATIC_DIR/src"
 
 if [ ! -x "$bin_path" ]; then
   echo "Downloading Tailwind standalone CLI ($TAILWIND_VERSION, $plat-$tarch)..."
-  curl -sL -o "$bin_path" \
+  curl $curl_flags -o "$bin_path" \
     "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/${bin_name}"
   chmod +x "$bin_path"
 fi
 
 if [ ! -f "$STATIC_DIR/alpine.min.js" ]; then
   echo "Vendoring Alpine.js..."
-  curl -sL -o "$STATIC_DIR/alpine.min.js" \
+  curl $curl_flags -o "$STATIC_DIR/alpine.min.js" \
     "https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"
 fi
 

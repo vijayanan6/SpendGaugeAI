@@ -1,11 +1,18 @@
 services:
   spendgaugeai:
-    build: .
+    build:
+      context: .
+      args:
+        # Opt-in only -- see scripts/build-css.sh and Dockerfile. Empty/off
+        # unless INSECURE_SSL_DOWNLOADS is set in .env (corporate TLS
+        # interception machines only).
+        INSECURE_SSL_DOWNLOADS: ${INSECURE_SSL_DOWNLOADS:-}
     ports:
       - "8000:8000"
     environment:
       SPENDGAUGEAI_API_KEY: ${SPENDGAUGEAI_API_KEY:-}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      SPENDGAUGEAI_INSECURE_SSL: ${SPENDGAUGEAI_INSECURE_SSL:-}
     volumes:
       - ./data:/data
     restart: unless-stopped

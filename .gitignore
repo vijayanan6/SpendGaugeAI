@@ -28,3 +28,8 @@ Thumbs.db
 
 # Playwright / test artifacts
 .playwright-mcp/
+
+# Personal machine automation (Windows Scheduled Task script) — not part of the
+# shipped product, specific to one dev machine's login-time recovery setup.
+scripts/ensure-docker-running.ps1
+scripts/ensure-docker-running.log

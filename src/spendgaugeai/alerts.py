@@ -44,10 +44,22 @@ def _webhook_url() -> str | None:
 
 async def _send_discord(message: str) -> bool:
     """POST a message to the Discord webhook. Never raises — a failed alert
-    must never break the caller's real POST /usage/log response."""
+    must never break the caller's real POST /usage/log response.
+
+    verify defaults to secure (True) -- SpendGaugeAI is a published, self-hosted
+    product other people install, not a personal script, so TLS verification
+    must not be silently disabled for every future user. Some machines (e.g.
+    behind a corporate certificate chain / network-monitoring driver) genuinely
+    can't complete standard TLS verification on any outbound HTTPS regardless
+    of CA bundle -- same class of issue the MCP Learning Project's api.py
+    already documents its own workaround for. For that case, opt in explicitly
+    via SPENDGAUGEAI_INSECURE_SSL=1 in .env; it stays off by default."""
+    import os
+    os.environ.pop("SSLKEYLOGFILE", None)
+    insecure = os.environ.get("SPENDGAUGEAI_INSECURE_SSL", "").lower() in ("1", "true", "yes")
     url = _webhook_url()
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=not insecure) as client:
             resp = await client.post(url, json={"content": message})
             resp.raise_for_status()
         return True

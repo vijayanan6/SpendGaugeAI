@@ -14,8 +14,18 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY scripts ./scripts
 
+# Opt-in only -- see scripts/build-css.sh. Off by default for every real user
+# building this image; set via docker-compose.yml's build.args on a machine
+# where outbound HTTPS from the build genuinely fails CERTIFICATE_VERIFY_FAILED.
+ARG INSECURE_SSL_DOWNLOADS=""
+ENV INSECURE_SSL_DOWNLOADS=$INSECURE_SSL_DOWNLOADS
+
 RUN ./scripts/build-css.sh \
-    && pip install --no-cache-dir . \
+    && if [ "$INSECURE_SSL_DOWNLOADS" = "1" ]; then \
+         pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org . ; \
+       else \
+         pip install --no-cache-dir . ; \
+       fi \
     && rm -rf .tailwind-bin
 
 ENV HOST=0.0.0.0 \
