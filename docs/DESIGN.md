@@ -519,15 +519,23 @@ backwards for a product whose stated audience is "anyone building a Claude API a
   reporting from a context `wrap()` can't see into). Stays available in every SDK; not the
   default-recommended path, but not deprecated either.
 
-**`wrap()`'s four real edges — found in design review, resolved here, not left implicit:**
+**`wrap()`'s six real edges — the first four found in design review, the last two only found by
+wiring a real app to a real production server, not assumed from a first design pass:**
 
-1. **Patch at the shared choke point, not a convenience wrapper.** `wrap()` patches
-   `messages.create` and `messages.stream` directly on the client object — on *both* `Anthropic`
-   and `AsyncAnthropic` (four patch points total, not one; the source project's dogfooding target
-   uses `AsyncAnthropic` exclusively, so sync-only support would silently cover nothing there).
-   Patching at this shared level means `client.beta.messages.tool_runner` — which calls the same
-   underlying method internally in its agentic loop — is automatically covered too, with no
-   special-case code needed for it.
+1. **Patch at the shared choke point — which turned out to be *two* objects, not one.** `wrap()`
+   patches `messages.create` and `messages.stream` directly on the client object — on *both*
+   `Anthropic` and `AsyncAnthropic` (four patch points total, not one; the source project's
+   dogfooding target uses `AsyncAnthropic` exclusively, so sync-only support would silently cover
+   nothing there). The original version of this section claimed patching `client.messages` alone
+   was enough because `client.beta.messages.tool_runner` "calls the same underlying method
+   internally" — **that claim was wrong, and shipped for a week before a live integration
+   surfaced it.** `client.messages` and `client.beta.messages` are genuinely separate resource
+   objects in the real SDK (`client.messages is client.beta.messages` → `False`, confirmed live in
+   both the Python and TS SDKs), and `tool_runner`'s internal agentic loop calls exclusively
+   through `self._client.beta.messages...` — never the stable resource. `wrap()` now patches
+   **both** `anthropic_client.messages` and, if present, `anthropic_client.beta.messages` (same
+   patch function, applied twice) — real `Anthropic`/`AsyncAnthropic` clients always have `.beta`.
+   Test doubles with no `.beta` attribute keep working unchanged — only patched when present.
 2. **Streaming reports from the final accumulated message, in a `finally` block.** Non-streaming
    `.create()` returns a `Message` with `.usage` directly — report immediately. Streaming
    (`stream=True`, or `.stream()`) only has usage once the stream completes, so `wrap()` returns
@@ -560,6 +568,32 @@ backwards for a product whose stated audience is "anyone building a Claude API a
    ```
    Same logic runs against the final message whether it came from a plain call or an exhausted
    stream — only how the final message is obtained differs between the two paths.
+5. **`tool_runner`'s non-streaming variant calls a *third* method, `.parse()` — not `.create()`
+   at all.** Fixing edge 1 (patching `.beta.messages`) still wasn't enough: `BetaAsyncToolRunner`
+   /`BetaToolRunner` (what a bare `tool_runner(...)` call returns when `stream` isn't passed —
+   the common case) calls `self._client.beta.messages.parse(...)` internally, confirmed by
+   reading the SDK's own source. `.create()` was never invoked at all for this path. `wrap()` now
+   patches `.parse()` too, if present, alongside `.create()`/`.stream()` — reported the same
+   simple way as non-streaming `.create()`, since `.parse()` never returns a raw stream (its own
+   `stream` kwarg only affects the request body, not the transport call, which the SDK always
+   makes non-streaming internally).
+6. **Sync-vs-async detection via `inspect.iscoroutinefunction()` silently lies about the real
+   SDK.** `wrap()` branches its patch logic on `inspect.iscoroutinefunction(original_create)` to
+   decide whether to `await` — this reports **`False`** for a real `AsyncAnthropic` client's
+   `.create()`/`.parse()`, confirmed live, because the SDK wraps the true `async def` in an
+   internal sync dispatcher (still `functools.wraps`-decorated, so `await client.create(...)`
+   works completely normally for real callers — the dispatcher just returns the inner coroutine
+   object for the caller to await). Every unit test in this repo used a fake client built from a
+   plain `async def` function directly, which *correctly* reports `True` — so this stayed
+   invisible until `wrap()` was tested against a real SDK client instead of a test double, for the
+   first time, wiring up a real app. The consequence was silent and specific: `wrap()` took its
+   *sync* patch branch even for a real `AsyncAnthropic` client, so `response = original_create(...)`
+   (no `await`) captured the **unawaited coroutine object itself**, not the real message — every
+   report fired with all-zero tokens/cost, while the real Anthropic call kept working perfectly
+   (the outer caller still awaits whatever `patched_create`'s sync body returns). Fixed with
+   `inspect.iscoroutinefunction(inspect.unwrap(original_create))` — `inspect.unwrap()` follows the
+   dispatcher's `__wrapped__` chain to the real function; test doubles with no `__wrapped__`
+   unwrap to themselves, so existing tests needed no changes, only a new one to lock this in.
 
 **Both patterns, in every official SDK, share a hard guarantee:** a short request timeout, every
 exception caught internally, never raised into the caller's app. Reporting usage must never be

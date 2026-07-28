@@ -248,4 +248,67 @@ describe("wrap()", () => {
       });
     });
   });
+
+  // Regression: client.beta.messages.toolRunner(...) — the documented,
+  // "automatically covered" way to use wrap() with an agentic tool loop —
+  // calls exclusively through client.beta.messages.create/.stream
+  // internally, a genuinely separate object from client.messages
+  // (confirmed live against the real @anthropic-ai/sdk). wrap() previously
+  // only ever patched the stable resource, so every toolRunner-based app
+  // silently never reported anything and enforce never blocked anything
+  // either — discovered live wiring a real app to a real production server.
+  describe("wrap() also covers client.beta.messages", () => {
+    it("reports from a beta.messages.create() call", async () => {
+      const fakeClient: WrappableAnthropicClient = {
+        messages: { create: vi.fn(), stream: vi.fn() },
+        beta: { messages: { create: vi.fn().mockResolvedValue(fakeMessage()), stream: vi.fn() } },
+      };
+      const wrapped = wrap(fakeClient, spendgauge);
+
+      const response = await wrapped.beta!.messages.create({ model: "claude-sonnet-4-6" });
+      expect(response.content[0].text).toBe("hello");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports from stable and beta messages independently", async () => {
+      const fakeClient: WrappableAnthropicClient = {
+        messages: { create: vi.fn().mockResolvedValue(fakeMessage()), stream: vi.fn() },
+        beta: { messages: { create: vi.fn().mockResolvedValue(fakeMessage()), stream: vi.fn() } },
+      };
+      const wrapped = wrap(fakeClient, spendgauge);
+
+      await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      await wrapped.beta!.messages.create({ model: "claude-sonnet-4-6" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("leaves a client with no .beta untouched and still working", async () => {
+      const fakeClient: WrappableAnthropicClient = {
+        messages: { create: vi.fn().mockResolvedValue(fakeMessage()), stream: vi.fn() },
+      };
+      const wrapped = wrap(fakeClient, spendgauge);
+      expect(wrapped.beta).toBeUndefined();
+
+      await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws BudgetExceededError from beta.messages.create() when the cap is exceeded", async () => {
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        if (url.toString().includes("/usage/budget")) {
+          return new Response(JSON.stringify({ exceeded: true }), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      });
+      const betaCreate = vi.fn();
+      const fakeClient: WrappableAnthropicClient = {
+        messages: { create: vi.fn(), stream: vi.fn() },
+        beta: { messages: { create: betaCreate, stream: vi.fn() } },
+      };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true });
+
+      await expect(wrapped.beta!.messages.create({ model: "claude-sonnet-4-6" })).rejects.toThrow(BudgetExceededError);
+      expect(betaCreate).not.toHaveBeenCalled();
+    });
+  });
 });

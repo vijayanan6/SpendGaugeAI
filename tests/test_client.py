@@ -2,6 +2,8 @@
 fake Anthropic-shaped client. Uses SimpleNamespace since wrap()'s extraction
 helpers only ever use getattr(), matching real SDK response objects without
 needing the anthropic package installed."""
+import functools
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +20,24 @@ class _FakeMessages:
 class _FakeClient:
     def __init__(self, create_fn, stream_fn=None):
         self.messages = _FakeMessages(create_fn, stream_fn)
+
+
+class _FakeBeta:
+    def __init__(self, create_fn, stream_fn=None):
+        self.messages = _FakeMessages(create_fn, stream_fn)
+
+
+class _FakeClientWithBeta(_FakeClient):
+    """Mirrors the real Anthropic SDK's actual shape: `.messages` (stable)
+    and `.beta.messages` — a genuinely separate object, confirmed live
+    (`client.messages is client.beta.messages` is False in the real SDK).
+    `client.beta.messages.tool_runner(...)` calls exclusively through
+    `.beta.messages`, never `.messages` — the exact distinction wrap()
+    originally missed, silently never covering tool_runner-based apps."""
+
+    def __init__(self, create_fn, stream_fn=None, beta_create_fn=None, beta_stream_fn=None):
+        super().__init__(create_fn, stream_fn)
+        self.beta = _FakeBeta(beta_create_fn or create_fn, beta_stream_fn or stream_fn)
 
 
 def _fake_message(**overrides):
@@ -52,6 +72,22 @@ def _fake_raw_events():
         SimpleNamespace(type="message_delta", usage=SimpleNamespace(output_tokens=50, server_tool_use=SimpleNamespace(web_search_requests=2))),
         SimpleNamespace(type="message_stop"),
     ]
+
+
+def _sdk_style_dispatcher(async_fn):
+    """Mimics the real Anthropic SDK's internal decorator shape on `create`/
+    `parse`: a plain *sync* function (not `async def`) that just returns the
+    coroutine from an inner `async def` without awaiting it. Callers can
+    still `await` the result normally (that's why real chat calls always
+    worked), but `inspect.iscoroutinefunction()` on the outer wrapper
+    incorrectly reports False — confirmed live against the real SDK
+    (`inspect.iscoroutinefunction(client.beta.messages.create)` is False).
+    `functools.wraps` preserves `__wrapped__` so `inspect.unwrap()` can still
+    find the real async function, exactly matching the real SDK's shape."""
+    @functools.wraps(async_fn)
+    def dispatcher(*args, **kwargs):
+        return async_fn(*args, **kwargs)  # not awaited — returns a coroutine
+    return dispatcher
 
 
 @pytest.fixture
@@ -383,3 +419,123 @@ async def test_enforce_raises_before_async_stream_enter_when_exceeded(monkeypatc
         async with stream_wrapper:
             pass
     assert manager.entered is False
+
+
+# ── wrap() also covers client.beta.messages (tool_runner's actual path) ────
+#
+# Regression: client.beta.messages.tool_runner(...) — the documented,
+# "automatically covered" way to use wrap() with an agentic tool loop —
+# calls exclusively through client.beta.messages.create/.stream internally,
+# a genuinely different object than client.messages. wrap() previously only
+# ever patched the stable resource, so every tool_runner-based app silently
+# never reported anything and enforce=True never blocked anything either —
+# discovered live wiring a real app (Pragya AI Assistant) to a real,
+# already-redeployed production server.
+
+def test_sync_beta_messages_create_reports(captured):
+    fake_client = _FakeClientWithBeta(create_fn=lambda *a, **k: _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    response = wrapped.beta.messages.create(model="claude-sonnet-4-6")
+    assert response.content[0].text == "hello"
+    assert len(captured) == 1
+    assert captured[0]["input_tokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_async_beta_messages_create_reports(captured):
+    async def async_create(*a, **k):
+        return _fake_message()
+
+    fake_client = _FakeClientWithBeta(create_fn=async_create)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    response = await wrapped.beta.messages.create(model="claude-sonnet-4-6")
+    assert response.content[0].text == "hello"
+    assert len(captured) == 1
+
+
+def test_stable_and_beta_messages_report_independently(captured):
+    fake_client = _FakeClientWithBeta(create_fn=lambda *a, **k: _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    wrapped.beta.messages.create(model="claude-sonnet-4-6")
+    assert len(captured) == 2
+
+
+def test_client_without_beta_attribute_still_works(captured):
+    # Plain fake clients with no `.beta` at all (every other test in this
+    # file) must keep working unchanged — `.beta.messages` is only patched
+    # when present.
+    fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+    assert not hasattr(fake_client, "beta")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert len(captured) == 1
+
+
+def test_enforce_raises_on_beta_messages_create_when_exceeded(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: True)
+    real_call_made = []
+    fake_client = _FakeClientWithBeta(create_fn=lambda *a, **k: real_call_made.append(1) or _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
+
+    with pytest.raises(SpendGaugeAIBudgetExceededError):
+        wrapped.beta.messages.create(model="claude-sonnet-4-6")
+    assert real_call_made == []
+
+
+def test_enforce_raises_on_beta_messages_stream_enter_when_exceeded(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: True)
+    manager = _FakeSyncStreamManager(_fake_message())
+    fake_client = _FakeClientWithBeta(
+        create_fn=lambda *a, **k: None,
+        stream_fn=lambda *a, **k: None,
+        beta_create_fn=lambda *a, **k: None,
+        beta_stream_fn=lambda *a, **k: manager,
+    )
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
+
+    stream_wrapper = wrapped.beta.messages.stream(model="claude-sonnet-4-6")
+    with pytest.raises(SpendGaugeAIBudgetExceededError):
+        with stream_wrapper:
+            pass
+    assert manager.entered is False
+
+
+# ── wrap() correctly detects async through an SDK-style sync dispatcher ────
+#
+# Regression: the real Anthropic SDK's `async def create`/`parse` are wrapped
+# in an internal sync dispatcher decorator, so inspect.iscoroutinefunction()
+# on the *outer* callable is False even though `await client.create(...)`
+# works completely normally for real callers. wrap() previously branched sync
+# vs. async based on that direct (mis-)detection, so against a real
+# AsyncAnthropic client it silently took the *sync* patch branch:
+# `response = original_create(*args, **kwargs)` without awaiting captured the
+# unawaited coroutine object itself rather than the real message, and
+# `_report_kwargs` extracted all zeros from it (input_tokens, output_tokens,
+# everything) — a real report was still sent, just entirely wrong, and the
+# real API call itself kept working (the caller awaits whatever
+# patched_create's sync body returns), which is exactly why this stayed
+# invisible until tested against a real SDK client instead of a plain
+# `async def` fake function (which happens to report correctly by accident).
+
+@pytest.mark.asyncio
+async def test_wrap_detects_async_through_sdk_style_sync_dispatcher(captured):
+    async def real_async_create(*a, **k):
+        return _fake_message()
+
+    sdk_style_create = _sdk_style_dispatcher(real_async_create)
+    # Confirms this fixture actually reproduces the real bug shape.
+    assert inspect.iscoroutinefunction(sdk_style_create) is False
+    assert inspect.iscoroutinefunction(inspect.unwrap(sdk_style_create)) is True
+
+    fake_client = _FakeClient(create_fn=sdk_style_create)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    response = await wrapped.messages.create(model="claude-sonnet-4-6")
+    assert response.content[0].text == "hello"  # real message, not an unawaited coroutine
+    assert len(captured) == 1
+    assert captured[0]["input_tokens"] == 100  # not 0 — proves the real message was reported

@@ -5,11 +5,12 @@ Two integration patterns, both best-effort and silent on failure — reporting
 usage must never be able to break the real app using it:
 
 - wrap(anthropic_client, ...) — patches `messages.create` and `messages.stream`
-  on the given client object (works for both `Anthropic` and `AsyncAnthropic`,
-  detected at wrap time) so every call through it reports itself automatically.
-  Patching at this shared choke point means `client.beta.messages.tool_runner`,
-  which calls the same underlying method internally, is covered too — no
-  special-casing needed.
+  on *both* `anthropic_client.messages` and `anthropic_client.beta.messages`
+  (genuinely separate resource objects — works for both `Anthropic` and
+  `AsyncAnthropic`, detected at wrap time) so every call through it reports
+  itself automatically. `client.beta.messages.tool_runner` calls exclusively
+  through the beta resource internally, so both must be patched — patching
+  only `.messages` silently covers nothing for tool_runner-based apps.
 - SpendGaugeAIClient(...).log(...) / .alog(...) — manual, explicit reporting.
 
 session_id/project flow through a contextvars.ContextVar (asyncio-task-local),
@@ -408,6 +409,28 @@ def wrap(
     call through it reports itself to SpendGaugeAI. Returns the same client
     object, mutated in place, for `client = wrap(Anthropic())`-style use.
 
+    Patches **two** separate resource objects, not one: `anthropic_client
+    .messages` (the stable API) and, if present, `anthropic_client.beta
+    .messages` (the beta API) — confirmed live that these are genuinely
+    different objects in the real SDK (`client.messages is client.beta
+    .messages` is False), and `client.beta.messages.tool_runner(...)`'s
+    internal agentic loop calls exclusively through the *beta* resource.
+    `.beta` is only patched when present, so simple test doubles without a
+    `.beta` attribute keep working unchanged.
+
+    Also patches `.parse()`, if present, alongside `.create()`/`.stream()` —
+    **not an optional extra**: `tool_runner(...)`'s *non-streaming* variant
+    (`BetaAsyncToolRunner`/`BetaToolRunner` — what a bare `tool_runner(...)`
+    call with no `stream=True` actually returns) calls `.beta.messages
+    .parse(...)` internally, never `.create()` at all. Confirmed live wiring
+    a real tool_runner-based app to a real production server: `.beta` alone
+    wasn't enough — the call succeeded, nothing ever reported, because
+    `.parse()` was the one method that stayed unpatched. `.parse()` never
+    returns a raw stream (its own `stream` kwarg is folded into the request
+    body but the underlying transport call is always non-streaming), so it's
+    reported the same simple way as non-streaming `.create()` — no raw-wrapper
+    branch needed.
+
     `enforce=True` opts into hard spend-cap enforcement: before each call,
     checks the global budget cap (SpendGaugeAIClient.check_budget(), cached
     for `enforce_cache_seconds`) and raises SpendGaugeAIBudgetExceededError if
@@ -416,56 +439,109 @@ def wrap(
     fails open (proceeds) on any check failure, same as check_budget() itself.
     """
     spendgauge = SpendGaugeAIClient(base_url=base_url, api_key=api_key, project=project, timeout=timeout)
-    messages_obj = anthropic_client.messages
-    original_create = messages_obj.create
-    original_stream = messages_obj.stream
-    is_async_client = inspect.iscoroutinefunction(original_create)
 
     def _raise_if_exceeded(exceeded: bool | None) -> None:
         if exceeded:
             raise SpendGaugeAIBudgetExceededError("SpendGaugeAI: global spend cap exceeded — call blocked")
 
-    if is_async_client:
-        @functools.wraps(original_create)
-        async def patched_create(*args, **kwargs):
-            if enforce:
-                _raise_if_exceeded(await spendgauge.acheck_budget(cache_seconds=enforce_cache_seconds))
-            response = await original_create(*args, **kwargs)
-            # stream=True routes through the raw event iterator (no populated
-            # .usage/.content on `response` itself) — distinct from .stream(),
-            # which returns a context manager. Report via the wrapper instead
-            # of _report_kwargs(response, ...), which would silently log zeros.
-            if kwargs.get("stream"):
-                return _AsyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
-            try:
-                await spendgauge.alog(**_report_kwargs(response, kwargs.get("model", "unknown")))
-            except Exception as e:
-                logger.debug(f"[spendgaugeai] report failed: {e}")
-            return response
+    def _patch_messages_resource(messages_obj) -> None:
+        original_create = messages_obj.create
+        original_stream = messages_obj.stream
+        original_parse = getattr(messages_obj, "parse", None)
+        # inspect.iscoroutinefunction(original_create) directly returns False
+        # here for a *real* Anthropic/AsyncAnthropic client — confirmed live —
+        # because the SDK wraps the true `async def create` in an internal
+        # sync dispatcher decorator (preserving `__wrapped__`, which is why
+        # await client.beta.messages.create(...) still works fine for normal
+        # callers: the sync wrapper just returns the inner coroutine object,
+        # which the caller then awaits). Only unit tests using a plain
+        # `async def` fake function directly ever got this right by accident.
+        # inspect.unwrap() follows `__wrapped__` to the real function, giving
+        # a correct answer for both real SDK clients and simple test doubles
+        # (which have no `__wrapped__` and unwrap to themselves). Without
+        # this, is_async_client was silently False for real AsyncAnthropic
+        # clients, so the *sync* patched_create/patched_parse branch ran:
+        # `response = original_create(...)` without awaiting captured the
+        # unawaited coroutine object itself, not the real message — every
+        # real report silently carried all-zero tokens/cost, though the
+        # actual Anthropic call still worked (the outer caller awaits the
+        # coroutine `patched_create`'s sync body returns).
+        is_async_client = inspect.iscoroutinefunction(inspect.unwrap(original_create))
 
-        @functools.wraps(original_stream)
-        def patched_stream(*args, **kwargs):
-            manager = original_stream(*args, **kwargs)
-            return _AsyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"), enforce, enforce_cache_seconds)
-    else:
-        @functools.wraps(original_create)
-        def patched_create(*args, **kwargs):
-            if enforce:
-                _raise_if_exceeded(spendgauge.check_budget(cache_seconds=enforce_cache_seconds))
-            response = original_create(*args, **kwargs)
-            if kwargs.get("stream"):
-                return _SyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
-            try:
-                spendgauge.log(**_report_kwargs(response, kwargs.get("model", "unknown")))
-            except Exception as e:
-                logger.debug(f"[spendgaugeai] report failed: {e}")
-            return response
+        if is_async_client:
+            @functools.wraps(original_create)
+            async def patched_create(*args, **kwargs):
+                if enforce:
+                    _raise_if_exceeded(await spendgauge.acheck_budget(cache_seconds=enforce_cache_seconds))
+                response = await original_create(*args, **kwargs)
+                # stream=True routes through the raw event iterator (no populated
+                # .usage/.content on `response` itself) — distinct from .stream(),
+                # which returns a context manager. Report via the wrapper instead
+                # of _report_kwargs(response, ...), which would silently log zeros.
+                if kwargs.get("stream"):
+                    return _AsyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
+                try:
+                    await spendgauge.alog(**_report_kwargs(response, kwargs.get("model", "unknown")))
+                except Exception as e:
+                    logger.debug(f"[spendgaugeai] report failed: {e}")
+                return response
 
-        @functools.wraps(original_stream)
-        def patched_stream(*args, **kwargs):
-            manager = original_stream(*args, **kwargs)
-            return _SyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"), enforce, enforce_cache_seconds)
+            @functools.wraps(original_stream)
+            def patched_stream(*args, **kwargs):
+                manager = original_stream(*args, **kwargs)
+                return _AsyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"), enforce, enforce_cache_seconds)
 
-    messages_obj.create = patched_create
-    messages_obj.stream = patched_stream
+            if original_parse is not None:
+                @functools.wraps(original_parse)
+                async def patched_parse(*args, **kwargs):
+                    if enforce:
+                        _raise_if_exceeded(await spendgauge.acheck_budget(cache_seconds=enforce_cache_seconds))
+                    response = await original_parse(*args, **kwargs)
+                    try:
+                        await spendgauge.alog(**_report_kwargs(response, kwargs.get("model", "unknown")))
+                    except Exception as e:
+                        logger.debug(f"[spendgaugeai] report failed: {e}")
+                    return response
+        else:
+            @functools.wraps(original_create)
+            def patched_create(*args, **kwargs):
+                if enforce:
+                    _raise_if_exceeded(spendgauge.check_budget(cache_seconds=enforce_cache_seconds))
+                response = original_create(*args, **kwargs)
+                if kwargs.get("stream"):
+                    return _SyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
+                try:
+                    spendgauge.log(**_report_kwargs(response, kwargs.get("model", "unknown")))
+                except Exception as e:
+                    logger.debug(f"[spendgaugeai] report failed: {e}")
+                return response
+
+            @functools.wraps(original_stream)
+            def patched_stream(*args, **kwargs):
+                manager = original_stream(*args, **kwargs)
+                return _SyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"), enforce, enforce_cache_seconds)
+
+            if original_parse is not None:
+                @functools.wraps(original_parse)
+                def patched_parse(*args, **kwargs):
+                    if enforce:
+                        _raise_if_exceeded(spendgauge.check_budget(cache_seconds=enforce_cache_seconds))
+                    response = original_parse(*args, **kwargs)
+                    try:
+                        spendgauge.log(**_report_kwargs(response, kwargs.get("model", "unknown")))
+                    except Exception as e:
+                        logger.debug(f"[spendgaugeai] report failed: {e}")
+                    return response
+
+        messages_obj.create = patched_create
+        messages_obj.stream = patched_stream
+        if original_parse is not None:
+            messages_obj.parse = patched_parse
+
+    _patch_messages_resource(anthropic_client.messages)
+    beta = getattr(anthropic_client, "beta", None)
+    beta_messages = getattr(beta, "messages", None) if beta is not None else None
+    if beta_messages is not None:
+        _patch_messages_resource(beta_messages)
+
     return anthropic_client

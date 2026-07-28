@@ -1,6 +1,10 @@
 /**
  * wrap.ts — patches messages.create and messages.stream on an Anthropic
  * client so every call reports itself automatically (docs/DESIGN.md §8a).
+ * Patches *two* separate resource objects: `client.messages` and, if
+ * present, `client.beta.messages` — `client.beta.messages.toolRunner(...)`'s
+ * internal agentic loop calls exclusively through the beta resource, so
+ * patching only the stable one silently never covers toolRunner-based apps.
  *
  * Unlike the Python SDK, the JS Anthropic SDK has one client class (every
  * method already returns a Promise) — there's no sync/async split to patch
@@ -158,15 +162,28 @@ function wrapRawStream(
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface MessagesResourceLike {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  create: (...args: any[]) => Promise<any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  stream: (...args: any[]) => any;
+}
+
 // Minimal structural shape wrap() needs. Avoids a hard runtime dependency on
 // @anthropic-ai/sdk (it's a peerDependency — apps bring their own version);
-// TypeScript structurally matches a real Anthropic/AsyncAnthropic-style client.
+// TypeScript structurally matches a real Anthropic client. `beta.messages` is
+// optional here (older/minimal clients won't have it), but on a real
+// Anthropic client it's a genuinely *separate* resource object from
+// `.messages` — confirmed live (`client.messages !== client.beta.messages`)
+// — and `client.beta.messages.toolRunner(...)`'s internal agentic loop calls
+// exclusively through `.beta.messages`, never the stable resource. Patching
+// only `.messages` (this project's original assumption) silently never
+// covers toolRunner-based apps at all.
 export interface WrappableAnthropicClient {
-  messages: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    create: (...args: any[]) => Promise<any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    stream: (...args: any[]) => any;
+  messages: MessagesResourceLike;
+  beta?: {
+    messages: MessagesResourceLike;
   };
 }
 
@@ -193,13 +210,8 @@ export interface WrapOptions {
   enforceCacheSeconds?: number;
 }
 
-export function wrap<T extends WrappableAnthropicClient>(
-  anthropicClient: T,
-  spendgauge: SpendGaugeAIClient,
-  options: WrapOptions = {},
-): T {
-  const { enforce = false, enforceCacheSeconds = 5 } = options;
-  const messages = anthropicClient.messages;
+function patchMessagesResource(messages: MessagesResourceLike, spendgauge: SpendGaugeAIClient, options: Required<WrapOptions>): void {
+  const { enforce, enforceCacheSeconds } = options;
   const originalCreate = messages.create.bind(messages);
   const originalStream = messages.stream.bind(messages);
 
@@ -235,6 +247,22 @@ export function wrap<T extends WrappableAnthropicClient>(
       });
     return stream;
   }) as typeof messages.stream;
+}
+
+export function wrap<T extends WrappableAnthropicClient>(
+  anthropicClient: T,
+  spendgauge: SpendGaugeAIClient,
+  options: WrapOptions = {},
+): T {
+  const resolved: Required<WrapOptions> = {
+    enforce: options.enforce ?? false,
+    enforceCacheSeconds: options.enforceCacheSeconds ?? 5,
+  };
+
+  patchMessagesResource(anthropicClient.messages, spendgauge, resolved);
+  if (anthropicClient.beta?.messages) {
+    patchMessagesResource(anthropicClient.beta.messages, spendgauge, resolved);
+  }
 
   return anthropicClient;
 }
