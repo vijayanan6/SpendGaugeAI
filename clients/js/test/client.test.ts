@@ -129,12 +129,64 @@ describe("SpendGaugeAIClient.checkBudget", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("peekCachedBudgetExceeded reflects a warm cache and defaults to false when cold", async () => {
+  it("peekCachedBudgetStatus reflects a warm cache and returns null when cold", async () => {
     const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
-    expect(client.peekCachedBudgetExceeded()).toBe(false);
+    expect(client.peekCachedBudgetStatus()).toBeNull();
 
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exceeded: true }), { status: 200 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exceeded: true, near_limit: false }), { status: 200 }));
     await client.checkBudget({ cacheSeconds: 60 });
-    expect(client.peekCachedBudgetExceeded({ cacheSeconds: 60 })).toBe(true);
+    expect(client.peekCachedBudgetStatus({ cacheSeconds: 60 })).toEqual({
+      startingBalance: 0,
+      remainingUsd: 0,
+      exceeded: true,
+      nearLimit: false,
+    });
+  });
+});
+
+describe("SpendGaugeAIClient.getBudgetStatus", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("maps the full server response, including near_limit -> nearLimit", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ starting_balance: 10, remaining_usd: 2, exceeded: false, near_limit: true }),
+        { status: 200 },
+      ),
+    );
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+
+    await expect(client.getBudgetStatus()).resolves.toEqual({
+      startingBalance: 10,
+      remainingUsd: 2,
+      exceeded: false,
+      nearLimit: true,
+    });
+  });
+
+  it("returns null (fails open) on network failure", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+    await expect(client.getBudgetStatus()).resolves.toBeNull();
+  });
+
+  it("shares its cache with checkBudget (one cached response backs both)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ exceeded: false, near_limit: true }), { status: 200 }),
+    );
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+
+    await client.checkBudget({ cacheSeconds: 60 });
+    await client.getBudgetStatus({ cacheSeconds: 60 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

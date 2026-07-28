@@ -197,7 +197,7 @@ thing that breaks under real concurrent load.
 | `/health` | GET | none | Docker liveness check — no data in the response, gating it would break orchestration for no benefit |
 | `/usage/log` | POST | **Bearer** (API key) | Ingest one usage record |
 | `/usage/credit` | POST | **Bearer** (API key) | Save starting balance / alert thresholds / trigger reset |
-| `/usage/budget` | GET | **Bearer** (API key) | Global spend-cap status — `{starting_balance, remaining_usd, exceeded}` (§8b); polled by the SDKs' enforcement guard, not the dashboard |
+| `/usage/budget` | GET | **Bearer** (API key) | Global spend-cap status — `{starting_balance, remaining_usd, exceeded, near_limit}` (§8b, §8c); polled by the SDKs' enforcement/downgrade guards, not the dashboard |
 | `/usage` | GET | **Basic** | Dashboard (server-rendered Jinja2 template) |
 | `/usage/data` | GET | **Basic** | Aggregated JSON (`?project=` optional filter) |
 | `/static/*` | GET | **Basic** | Compiled CSS, vendored Alpine.js, chart JS (static files) |
@@ -644,14 +644,15 @@ unmistakably opt-in (`enforce: true`), off by default, and raise a typed excepti
 catch: `SpendGaugeAIBudgetExceededError` (Python), `BudgetExceededError` (TS).
 
 **No new DB schema, no dashboard changes.** `database.budget_status(project=None) -> dict`
-returns `{starting_balance, remaining_usd, exceeded}` — `exceeded` is always `False` when
-`starting_balance <= 0` (unconfigured means no enforcement, the same convention §7's low-credit
-alert already used). `alerts.py`'s low-credit/digest checks now call this helper instead of
-duplicating the remaining-balance math a second time. `GET /usage/budget` (§4) is a thin
-`run_in_threadpool` wrapper around it, Bearer-only (this is a machine-facing check called by the
-SDK's enforcement guard, not the browser dashboard, so it doesn't need `require_bearer_or_basic`
-the way `/usage/credit` does) with an optional `?project=` filter — the cap itself stays global,
-but you can check one project's own spend against it.
+returns `{starting_balance, remaining_usd, exceeded, near_limit}` — `exceeded` is always `False`
+when `starting_balance <= 0` (unconfigured means no enforcement, the same convention §7's
+low-credit alert already used); `near_limit` is documented in §8c, which reuses this same field.
+`alerts.py`'s low-credit/digest checks now call this helper instead of duplicating the
+remaining-balance math a second time. `GET /usage/budget` (§4) is a thin `run_in_threadpool`
+wrapper around it, Bearer-only (this is a machine-facing check called by the SDK's
+enforcement/downgrade guards, not the browser dashboard, so it doesn't need
+`require_bearer_or_basic` the way `/usage/credit` does) with an optional `?project=` filter — the
+cap itself stays global, but you can check one project's own spend against it.
 
 **Client-side opt-in only.** `wrap(client, ..., enforce=True)` (Python) /
 `wrap(client, spendgauge, { enforce: true })` (TS, `wrap()`'s new optional 3rd param) is what
@@ -659,12 +660,16 @@ turns this on. `check_budget()`/`acheck_budget()` (Python) and `checkBudget()` (
 public methods on the client, not just `wrap()`-internals, so a `.log()`-only integrator can gate
 its own call site without adopting `wrap()`. All three: return `True`/`False` on a real answer,
 `None`/`null` on any failure (timeout, network error, non-2xx) — never raise/throw. `wrap()`'s
-guard only blocks on a definitive `True`; `None` and `False` both mean "proceed."
+guard only blocks on a definitive `True`; `None` and `False` both mean "proceed." Both are now
+thin wrappers over `get_budget_status()`/`getBudgetStatus()` (§8c) — the full status dict that
+also backs the downgrade decision, so one cached HTTP response serves both concerns.
 
-**Short TTL cache (default 5s) on the check result**, keyed per-project, to avoid doubling
-request volume against the shared rate limiter (§4) for an app making many Claude calls per
-minute — a few seconds of staleness on a budget *ceiling* is an acceptable trade against a
-network hop on every guarded call.
+**Short TTL cache (default 5s, param named `cache_seconds`/`cacheSeconds`) on the check result**,
+keyed per-project, to avoid doubling request volume against the shared rate limiter (§4) for an
+app making many Claude calls per minute — a few seconds of staleness on a budget *ceiling* is an
+acceptable trade against a network hop on every guarded call. (Named `enforce_cache_seconds`/
+`enforceCacheSeconds` originally; renamed once §8c gave the same cache a second purpose — safe to
+rename pre-publish, nothing external depended on the old name.)
 
 **Guarded at all four of §8a's choke points in Python** (sync/async `create`, sync/async
 `stream`, including the raw `stream=True` path) — but the two languages diverge on *where
@@ -678,11 +683,80 @@ exactly* the check runs for the `.stream()` path, for a real API-shape reason:
   by design, so callers can chain `.on(...)` before the network call resolves — wrapping it in a
   Promise to await a real check would break that contract for every caller, not just guarded
   ones. So the TS guard only ever consults `checkBudget()`'s cache **synchronously**
-  (`peekCachedBudgetExceeded()`) and, on a cold cache, fails open while kicking off a background
+  (`peekCachedBudgetStatus()`) and, on a cold cache, fails open while kicking off a background
   refresh. `messages.create(...)` in TS has no such constraint (it's already `Promise`-returning)
   and gets the full awaited check like Python. Net effect: in a sustained `.stream()`-only TS
   workload the cap is still enforced, just not necessarily on the very first call right after
   it's crossed — a real, documented, narrower guarantee than Python's, not a silent gap.
+
+## 8c. Budget-aware model downgrade — graceful degradation before the hard block
+
+§8b's `enforce` is a binary cliff: the app works normally right up until the cap, then every call
+fails. The more differentiated, more honest-to-"control layer, not just a fence" move is a softer
+middle tier: once spend is *close* to the cap but not yet over it, automatically route calls to a
+cheaper model instead of refusing them — the app keeps working, just cheaper, right up until the
+real limit, where `enforce` (if also on) still takes over.
+
+**Reuses `credit_config.warning_threshold` as the trigger — no new schema, no new dashboard
+field.** The same dollar amount that already triggers the Discord low-credit warning (§7) now
+means the same thing everywhere: a Discord ping *and*, for `wrap(downgrade_model=...)` callers,
+the SDK starting to be frugal. `database.budget_status()` (§8b) computes one more field:
+
+```python
+near_limit = starting_balance > 0 and not exceeded and remaining_usd <= warning_threshold
+```
+
+`near_limit` is `False` whenever `exceeded` is `True` — mutually exclusive by construction, so
+`wrap()`'s policy check can always evaluate `exceeded` first with no separate priority logic
+needed elsewhere.
+
+**New `wrap()` param, both languages:** `downgrade_model: str | None = None` (Python) /
+`downgradeModel?: string` (TS, `WrapOptions`) — independent of `enforce`; either can be on without
+the other.
+
+**Where the swap happens.** `messages.create` (both languages, both sync/async, including the raw
+`stream: true` path) fetches the full status once via `get_budget_status()`/`getBudgetStatus()`
+before the real call — the same choke point `enforce` already uses — and swaps `model` in place if
+`near_limit`. In Python, `kwargs` is already a fresh dict scoped to that one call, so mutating it
+directly is safe; in TS, `args[0]` is the *caller's own* object reference, so the swap
+shallow-copies (`{ ...params, model: downgradeModel }`) rather than mutating it in place — silently
+changing a caller's own object out from under them would be a surprising side effect their code
+didn't ask for.
+
+**`messages.stream` needs a synchronous peek in *both* languages — a real architectural
+constraint, not a style choice.** Once `original_stream(model=X, ...)` is called, `X` is baked
+into the returned stream/manager object with no supported way to change it after the fact, so the
+swap decision must happen *before* that call, inside `patched_stream` itself — which must stay a
+plain synchronous function in both languages (constructing a stream/manager object is synchronous
+by SDK design in both Python and TS, the same reason §8b's TS `enforce` guard already needed a
+peek). This is where Python and TS diverge from each other for `enforce` (§8b) but *agree* for
+`downgrade_model`:
+
+- TS reuses (renamed) `peekCachedBudgetStatus()` for both the `enforce` peek and the new downgrade
+  peek. Cold/stale cache → no swap (fail open), plus a background refresh kicked off exactly like
+  `enforce`'s cold-cache path already does.
+- Python gets a **new** `peek_cached_budget_status()` — Python's `enforce` guard for `.stream()`
+  never needed a peek (it lives inside `_SyncStreamWrapper.__enter__`/
+  `_AsyncStreamWrapper.__aenter__`, which run *after* the manager already exists, so a real
+  blocking/awaited check there is fine — it just delays entering the `with`/`async with` block, not
+  the manager's already-fixed `model`). Downgrade is different: it must know the answer *before*
+  the manager is constructed. Deliberately **no** background-refresh-on-cold-cache for Python —
+  `asyncio.ensure_future` fire-and-forget tasks have real lifecycle sharp edges ("Task was
+  destroyed but it is pending" if unreferenced) that JS's fire-and-forget promises don't share. A
+  cold cache here just means no downgrade for that one call — self-healing, since `.create()` calls
+  already populate the same shared cache, and the default TTL is only 5s. `enforce`'s existing
+  Python `.stream()` behavior is completely untouched by this — still a real, fresh,
+  awaited/blocking check, no regression.
+
+**Cost attribution needs zero extra work.** Both languages already report the model from the
+*response* (`message.model` / `getattr(message, "model", ...)`), not from what was originally
+requested — Anthropic's response always echoes back whichever model actually served the call. A
+downgraded call is therefore logged and cost-attributed correctly automatically.
+
+**Scope boundary:** only `model` gets swapped — not `max_tokens`, temperature, or anything else.
+No model-tier mapping table (`sonnet → haiku` auto-inference); the caller names their exact
+fallback model explicitly, the same reasoning `_PRICING` already needs hand-maintenance for — a
+second thing that goes stale the moment Anthropic ships a new model isn't worth building.
 
 ## 9. Packaging
 

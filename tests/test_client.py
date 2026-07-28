@@ -325,7 +325,7 @@ def test_enforce_off_by_default_never_checks_budget(captured, monkeypatch):
 
 
 def test_enforce_raises_before_sync_create_when_exceeded(captured, monkeypatch):
-    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: True)
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: {"exceeded": True, "near_limit": False})
     real_call_made = []
     fake_client = _FakeClient(create_fn=lambda *a, **k: real_call_made.append(1) or _fake_message())
     wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
@@ -337,7 +337,7 @@ def test_enforce_raises_before_sync_create_when_exceeded(captured, monkeypatch):
 
 
 def test_enforce_raises_before_sync_create_stream_true_when_exceeded(monkeypatch):
-    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: True)
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: {"exceeded": True, "near_limit": False})
     real_call_made = []
     fake_client = _FakeClient(create_fn=lambda *a, **k: real_call_made.append(1) or iter(_fake_raw_events()))
     wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
@@ -348,7 +348,7 @@ def test_enforce_raises_before_sync_create_stream_true_when_exceeded(monkeypatch
 
 
 def test_enforce_proceeds_when_not_exceeded(captured, monkeypatch):
-    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: False)
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: {"exceeded": False, "near_limit": False})
     fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_message())
     wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
 
@@ -358,7 +358,7 @@ def test_enforce_proceeds_when_not_exceeded(captured, monkeypatch):
 
 
 def test_enforce_fails_open_when_check_result_is_none(captured, monkeypatch):
-    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: None)
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: None)
     fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_message())
     wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
 
@@ -369,10 +369,10 @@ def test_enforce_fails_open_when_check_result_is_none(captured, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_enforce_raises_before_async_create_when_exceeded(monkeypatch):
-    async def fake_acheck(self, **k):
-        return True
+    async def fake_aget(self, **k):
+        return {"exceeded": True, "near_limit": False}
 
-    monkeypatch.setattr(SpendGaugeAIClient, "acheck_budget", fake_acheck)
+    monkeypatch.setattr(SpendGaugeAIClient, "aget_budget_status", fake_aget)
     real_call_made = []
 
     async def async_create(*a, **k):
@@ -477,7 +477,7 @@ def test_client_without_beta_attribute_still_works(captured):
 
 
 def test_enforce_raises_on_beta_messages_create_when_exceeded(monkeypatch):
-    monkeypatch.setattr(SpendGaugeAIClient, "check_budget", lambda self, **k: True)
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: {"exceeded": True, "near_limit": False})
     real_call_made = []
     fake_client = _FakeClientWithBeta(create_fn=lambda *a, **k: real_call_made.append(1) or _fake_message())
     wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True)
@@ -521,6 +521,140 @@ def test_enforce_raises_on_beta_messages_stream_enter_when_exceeded(monkeypatch)
 # patched_create's sync body returns), which is exactly why this stayed
 # invisible until tested against a real SDK client instead of a plain
 # `async def` fake function (which happens to report correctly by accident).
+
+# ── wrap(..., downgrade_model=...) ──────────────────────────────────────────
+
+def _status(*, exceeded=False, near_limit=False):
+    return {"starting_balance": 10.0, "remaining_usd": 1.0, "exceeded": exceeded, "near_limit": near_limit}
+
+
+def test_downgrade_off_by_default_never_checks_budget(captured, monkeypatch):
+    check_calls = []
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: check_calls.append(1) or _status())
+    fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert check_calls == []
+    assert len(captured) == 1
+
+
+def test_downgrade_swaps_model_on_sync_create_when_near_limit(captured, monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: _status(near_limit=True))
+    seen_kwargs = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: seen_kwargs.append(k) or _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert seen_kwargs[0]["model"] == "claude-haiku-4-5"  # the real call got the cheaper model
+
+
+def test_downgrade_leaves_model_alone_when_not_near_limit(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: _status(near_limit=False))
+    seen_kwargs = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: seen_kwargs.append(k) or _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert seen_kwargs[0]["model"] == "claude-sonnet-4-6"
+
+
+def test_downgrade_fails_open_when_check_result_is_none(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: None)
+    seen_kwargs = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: seen_kwargs.append(k) or _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert seen_kwargs[0]["model"] == "claude-sonnet-4-6"  # cold/failed check -> no downgrade
+
+
+def test_enforce_exceeded_wins_over_downgrade(monkeypatch):
+    # near_limit/exceeded are mutually exclusive by construction on the
+    # server, but wrap() should still prioritize a block over a downgrade if
+    # a status dict somehow reported both.
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: _status(exceeded=True, near_limit=True))
+    real_call_made = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: real_call_made.append(1) or _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True, downgrade_model="claude-haiku-4-5")
+
+    with pytest.raises(SpendGaugeAIBudgetExceededError):
+        wrapped.messages.create(model="claude-sonnet-4-6")
+    assert real_call_made == []
+
+
+def test_enforce_and_downgrade_together_downgrades_when_only_near_limit(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "get_budget_status", lambda self, **k: _status(exceeded=False, near_limit=True))
+    seen_kwargs = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: seen_kwargs.append(k) or _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", enforce=True, downgrade_model="claude-haiku-4-5")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")  # not blocked
+    assert seen_kwargs[0]["model"] == "claude-haiku-4-5"
+
+
+@pytest.mark.asyncio
+async def test_downgrade_swaps_model_on_async_create_when_near_limit(captured, monkeypatch):
+    async def fake_aget(self, **k):
+        return _status(near_limit=True)
+
+    monkeypatch.setattr(SpendGaugeAIClient, "aget_budget_status", fake_aget)
+    seen_kwargs = []
+
+    async def async_create(*a, **k):
+        seen_kwargs.append(k)
+        return _fake_message()
+
+    fake_client = _FakeClient(create_fn=async_create)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    await wrapped.messages.create(model="claude-sonnet-4-6")
+    assert seen_kwargs[0]["model"] == "claude-haiku-4-5"
+
+
+def test_downgrade_swaps_model_on_sync_stream_via_peek_when_near_limit(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "peek_cached_budget_status", lambda self, **k: _status(near_limit=True))
+    manager = _FakeSyncStreamManager(_fake_message())
+    seen_kwargs = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: None, stream_fn=lambda *a, **k: seen_kwargs.append(k) or manager)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    with wrapped.messages.stream(model="claude-sonnet-4-6"):
+        pass
+    assert seen_kwargs[0]["model"] == "claude-haiku-4-5"
+
+
+def test_downgrade_sync_stream_no_swap_on_cold_cache(monkeypatch):
+    # Python deliberately skips a background-refresh-on-cold-cache for the
+    # stream downgrade peek (see wrap()'s docstring) — a cold cache here just
+    # means no downgrade for this one call.
+    monkeypatch.setattr(SpendGaugeAIClient, "peek_cached_budget_status", lambda self, **k: None)
+    manager = _FakeSyncStreamManager(_fake_message())
+    seen_kwargs = []
+    fake_client = _FakeClient(create_fn=lambda *a, **k: None, stream_fn=lambda *a, **k: seen_kwargs.append(k) or manager)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    with wrapped.messages.stream(model="claude-sonnet-4-6"):
+        pass
+    assert seen_kwargs[0]["model"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_downgrade_swaps_model_on_async_stream_via_peek_when_near_limit(monkeypatch):
+    monkeypatch.setattr(SpendGaugeAIClient, "peek_cached_budget_status", lambda self, **k: _status(near_limit=True))
+    manager = _FakeAsyncStreamManager(_fake_message())
+    seen_kwargs = []
+
+    async def async_create(*a, **k):
+        return _fake_message()
+
+    fake_client = _FakeClient(create_fn=async_create, stream_fn=lambda *a, **k: seen_kwargs.append(k) or manager)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k", downgrade_model="claude-haiku-4-5")
+
+    async with wrapped.messages.stream(model="claude-sonnet-4-6"):
+        pass
+    assert seen_kwargs[0]["model"] == "claude-haiku-4-5"
+
 
 @pytest.mark.asyncio
 async def test_wrap_detects_async_through_sdk_style_sync_dispatcher(captured):

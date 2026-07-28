@@ -252,7 +252,7 @@ def test_usage_budget_unconfigured_never_exceeded(client):
     res = client.get("/usage/budget", headers=BEARER)
     assert res.status_code == 200
     body = res.json()
-    assert body == {"starting_balance": 0.0, "remaining_usd": 0.0, "exceeded": False}
+    assert body == {"starting_balance": 0.0, "remaining_usd": 0.0, "exceeded": False, "near_limit": False}
 
 
 def test_usage_budget_not_exceeded_under_cap(client):
@@ -266,6 +266,7 @@ def test_usage_budget_not_exceeded_under_cap(client):
     assert res.status_code == 200
     body = res.json()
     assert body["exceeded"] is False
+    assert body["near_limit"] is False
     assert body["starting_balance"] == 10.0
     assert body["remaining_usd"] == pytest.approx(10.0 - (0.003 + 0.015), rel=1e-6)
 
@@ -282,6 +283,8 @@ def test_usage_budget_exceeded_over_cap(client):
     body = res.json()
     assert body["exceeded"] is True
     assert body["remaining_usd"] == 0.0
+    # exceeded and near_limit are mutually exclusive by construction.
+    assert body["near_limit"] is False
 
 
 def test_usage_budget_project_filter_scopes_spend(client):
@@ -296,6 +299,38 @@ def test_usage_budget_project_filter_scopes_spend(client):
     body = res.json()
     assert body["exceeded"] is False
     assert body["remaining_usd"] == 10.0
+
+
+def test_usage_budget_near_limit_within_warning_threshold(client):
+    # warning_threshold defaults to 5.0 — spend down to $3 remaining out of a
+    # $10 cap should trip near_limit without tripping exceeded.
+    client.post("/usage/credit", json={"starting_balance": 10.0}, headers=BEARER)
+    client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "input_tokens": 2_333_334, "output_tokens": 0},
+        headers=BEARER,
+    )
+    res = client.get("/usage/budget", headers=BEARER)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["remaining_usd"] < 5.0
+    assert body["exceeded"] is False
+    assert body["near_limit"] is True
+
+
+def test_usage_budget_near_limit_respects_custom_warning_threshold(client):
+    client.post("/usage/credit", json={"starting_balance": 10.0, "warning_threshold": 1.0}, headers=BEARER)
+    client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "input_tokens": 1000, "output_tokens": 1000},
+        headers=BEARER,
+    )
+    res = client.get("/usage/budget", headers=BEARER)
+    assert res.status_code == 200
+    body = res.json()
+    # Only ~$0.018 spent out of $10 — far from both the default $5 warning
+    # and this custom $1 one.
+    assert body["near_limit"] is False
 
 
 def test_max_body_size_rejects_oversized_chunked_body_without_content_length(client):

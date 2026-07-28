@@ -88,6 +88,24 @@ try {
 Off by default, global cap only, fails open if SpendGaugeAI is unreachable — see `docs/DESIGN.md`
 §8b for the full design and the one JS-specific caveat around `messages.stream(...)`.
 
+**Opt-in graceful degradation** — once spend gets *close* to your budget but isn't over yet,
+automatically route calls to a cheaper model instead of blocking them, so the app keeps working,
+just cheaper, right up until the real limit (`docs/DESIGN.md` §8c):
+
+```python
+client = wrap(anthropic.Anthropic(), base_url="...", api_key="...", downgrade_model="claude-haiku-4-5")
+response = client.messages.create(model="claude-sonnet-4-6", ...)  # served on sonnet unless near the cap
+```
+```ts
+const client = wrap(new Anthropic(), spendgauge, { downgradeModel: "claude-haiku-4-5" });
+const response = await client.messages.create({ model: "claude-sonnet-4-6", ... });
+```
+"Near your limit" reuses the same `warning_threshold` that already triggers a Discord low-credit
+warning — no separate config. Independent of `enforce`; combine both for a two-stage policy
+(downgrade first, hard-block only once truly exhausted — `exceeded` always wins if both trigger).
+Cost is still attributed correctly with zero extra code: usage is reported from the model
+Anthropic actually served, not the one you originally requested.
+
 **Using tools / an agentic loop?** `wrap()` covers `client.beta.messages.tool_runner(...)` too —
 no different from the plain example above, same one `wrap()` call, nothing else to change:
 
@@ -214,6 +232,9 @@ reactivity rather than rebuilt from scratch in a different framework.
   configured budget is exhausted, the SDK refuses to make the next Anthropic call at all,
   raising a typed exception your app can catch — actual policy enforcement, not just a
   notification. Global cap, fails open if SpendGaugeAI is unreachable — see `docs/DESIGN.md` §8b.
+- **Budget-aware model downgrade** (opt-in, `wrap(client, ..., downgrade_model=...)`): once spend
+  is close to (but not yet over) the cap, the SDK automatically routes calls to a cheaper model
+  instead of blocking them — the app keeps working, just cheaper — see `docs/DESIGN.md` §8c.
 - A single shared API key gates the mutating/enforcement endpoints (`POST /usage/log`,
   `POST /usage/credit`, `GET /usage/budget`)
 - Official Python (`spendgaugeai`) and TypeScript/JS (`spendgaugeai-client`) SDKs, both with an

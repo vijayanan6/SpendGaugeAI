@@ -190,36 +190,70 @@ export interface WrappableAnthropicClient {
 export interface WrapOptions {
   /**
    * Opt into hard spend-cap enforcement: checks the global budget cap
-   * (SpendGaugeAIClient.checkBudget(), cached for `enforceCacheSeconds`)
-   * before each call and throws BudgetExceededError if it's confirmed
-   * exceeded. This is the one part of wrap() that's allowed to break the
-   * caller's app — everything else stays fail-safe. Off by default; fails
-   * open (proceeds) on any check failure, same as checkBudget() itself.
+   * (SpendGaugeAIClient.checkBudget(), cached for `cacheSeconds`) before each
+   * call and throws BudgetExceededError if it's confirmed exceeded. This is
+   * the one part of wrap() that's allowed to break the caller's app —
+   * everything else stays fail-safe. Off by default; fails open (proceeds)
+   * on any check failure, same as checkBudget() itself.
    *
    * `messages.create(...)` (including the raw `stream: true` path) awaits a
    * real check before the request goes out. `messages.stream(...)` can't —
    * it returns its MessageStream synchronously by design, so callers can
    * chain `.on(...)` before the network call resolves — so its guard only
-   * ever consults the cache synchronously (peekCachedBudgetExceeded) and
+   * ever consults the cache synchronously (peekCachedBudgetStatus) and
    * opportunistically refreshes it in the background. In a sustained
    * `.stream()`-only workload the cap still gets enforced, just not
    * necessarily on the very first call after it's crossed.
    */
   enforce?: boolean;
-  /** Cache TTL in seconds for the enforcement check. Default 5. */
-  enforceCacheSeconds?: number;
+  /**
+   * Opt into graceful degradation: once spend is within the server's
+   * `credit_config.warning_threshold` of the cap but not yet over it
+   * (`nearLimit`), the outgoing `model` is swapped for `downgradeModel`
+   * before the real call — the app keeps working, just cheaper, right up
+   * until the real limit. Independent of `enforce`; either can be on
+   * without the other. `exceeded` always wins over `nearLimit` when both
+   * are checked (mutually exclusive by construction on the server). Cost
+   * attribution needs no extra handling — usage is reported from the
+   * *response*'s own `model` field (what Anthropic actually served), not
+   * from what was requested. `messages.stream(...)` uses the same
+   * synchronous cache peek as `enforce` does, for the same reason: the swap
+   * must happen before `originalStream(...)` is called, and constructing
+   * its return value is synchronous by SDK design.
+   */
+  downgradeModel?: string;
+  /** Cache TTL in seconds for the enforcement/downgrade check. Default 5. */
+  cacheSeconds?: number;
 }
 
-function patchMessagesResource(messages: MessagesResourceLike, spendgauge: SpendGaugeAIClient, options: Required<WrapOptions>): void {
-  const { enforce, enforceCacheSeconds } = options;
+interface ResolvedWrapOptions {
+  enforce: boolean;
+  downgradeModel?: string;
+  cacheSeconds: number;
+}
+
+function patchMessagesResource(messages: MessagesResourceLike, spendgauge: SpendGaugeAIClient, options: ResolvedWrapOptions): void {
+  const { enforce, downgradeModel, cacheSeconds } = options;
   const originalCreate = messages.create.bind(messages);
   const originalStream = messages.stream.bind(messages);
 
   messages.create = (async (...args: unknown[]) => {
-    if (enforce && (await spendgauge.checkBudget({ cacheSeconds: enforceCacheSeconds }))) {
-      throw new BudgetExceededError();
+    let params = args[0] as { model?: string; stream?: boolean } | undefined;
+    if (enforce || downgradeModel) {
+      const status = await spendgauge.getBudgetStatus({ cacheSeconds });
+      if (status) {
+        if (enforce && status.exceeded) {
+          throw new BudgetExceededError();
+        }
+        // Shallow-copy before overriding model — args[0] is the caller's own
+        // object reference; mutating it in place would be a surprising,
+        // caller-visible side effect their own code didn't expect.
+        if (downgradeModel && status.nearLimit && params) {
+          params = { ...params, model: downgradeModel };
+          args = [params, ...args.slice(1)];
+        }
+      }
     }
-    const params = args[0] as { model?: string; stream?: boolean } | undefined;
     const requestedModel = params?.model ?? "unknown";
     const response = await originalCreate(...args);
     if (params?.stream) {
@@ -230,16 +264,26 @@ function patchMessagesResource(messages: MessagesResourceLike, spendgauge: Spend
   }) as typeof messages.create;
 
   messages.stream = ((...args: unknown[]) => {
+    let params = args[0] as { model?: string } | undefined;
     if (enforce) {
-      if (spendgauge.peekCachedBudgetExceeded({ cacheSeconds: enforceCacheSeconds })) {
+      const cachedStatus = spendgauge.peekCachedBudgetStatus({ cacheSeconds });
+      if (cachedStatus?.exceeded) {
         throw new BudgetExceededError();
       }
       // Can't await here without breaking messages.stream()'s synchronous
       // return contract — refresh the cache in the background instead.
-      void spendgauge.checkBudget({ cacheSeconds: enforceCacheSeconds }).catch(() => {});
+      void spendgauge.getBudgetStatus({ cacheSeconds }).catch(() => {});
+    }
+    if (downgradeModel && params) {
+      const cachedStatus = spendgauge.peekCachedBudgetStatus({ cacheSeconds });
+      if (cachedStatus?.nearLimit) {
+        // Shallow-copy — see the same note in messages.create above.
+        params = { ...params, model: downgradeModel };
+        args = [params, ...args.slice(1)];
+      }
     }
     const stream = originalStream(...args);
-    const requestedModel = (args[0] as { model?: string } | undefined)?.model ?? "unknown";
+    const requestedModel = params?.model ?? "unknown";
     Promise.resolve(stream.finalMessage())
       .then((finalMessage: MessageLike) => reportSafely(spendgauge, finalMessage, requestedModel))
       .catch(() => {
@@ -254,9 +298,10 @@ export function wrap<T extends WrappableAnthropicClient>(
   spendgauge: SpendGaugeAIClient,
   options: WrapOptions = {},
 ): T {
-  const resolved: Required<WrapOptions> = {
+  const resolved = {
     enforce: options.enforce ?? false,
-    enforceCacheSeconds: options.enforceCacheSeconds ?? 5,
+    downgradeModel: options.downgradeModel,
+    cacheSeconds: options.cacheSeconds ?? 5,
   };
 
   patchMessagesResource(anthropicClient.messages, spendgauge, resolved);

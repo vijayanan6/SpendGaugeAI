@@ -221,7 +221,7 @@ describe("wrap()", () => {
 
       const streamFn = vi.fn();
       const fakeClient: WrappableAnthropicClient = { messages: { create: vi.fn(), stream: streamFn } };
-      const wrapped = wrap(fakeClient, spendgauge, { enforce: true, enforceCacheSeconds: 60 });
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true, cacheSeconds: 60 });
 
       expect(() => wrapped.messages.stream({ model: "claude-sonnet-4-6" })).toThrow(BudgetExceededError);
       expect(streamFn).not.toHaveBeenCalled();
@@ -246,6 +246,115 @@ describe("wrap()", () => {
         const budgetCalls = fetchMock.mock.calls.filter(([url]) => url.toString().includes("/usage/budget"));
         expect(budgetCalls.length).toBeGreaterThan(0);
       });
+    });
+  });
+
+  describe("wrap(..., { downgradeModel })", () => {
+    function mockBudget(status: { exceeded: boolean; near_limit: boolean }) {
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        if (url.toString().includes("/usage/budget")) {
+          return new Response(JSON.stringify(status), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      });
+    }
+
+    it("swaps the outgoing model on create() when near the limit", async () => {
+      mockBudget({ exceeded: false, near_limit: true });
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5" });
+
+      await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      expect(createFn).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-haiku-4-5" }));
+    });
+
+    it("does not mutate the caller's own params object when swapping the model", async () => {
+      mockBudget({ exceeded: false, near_limit: true });
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5" });
+
+      const params = { model: "claude-sonnet-4-6" };
+      await wrapped.messages.create(params);
+      expect(params.model).toBe("claude-sonnet-4-6"); // caller's object left untouched
+    });
+
+    it("leaves the model alone when not near the limit", async () => {
+      mockBudget({ exceeded: false, near_limit: false });
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5" });
+
+      await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      expect(createFn).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-sonnet-4-6" }));
+    });
+
+    it("leaves the model alone (fails open) when the budget check fails", async () => {
+      fetchMock.mockRejectedValue(new Error("network down"));
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5" });
+
+      await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      expect(createFn).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-sonnet-4-6" }));
+    });
+
+    it("exceeded still wins when both enforce and downgradeModel are configured", async () => {
+      mockBudget({ exceeded: true, near_limit: false });
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true, downgradeModel: "claude-haiku-4-5" });
+
+      await expect(wrapped.messages.create({ model: "claude-sonnet-4-6" })).rejects.toThrow(BudgetExceededError);
+      expect(createFn).not.toHaveBeenCalled();
+    });
+
+    it("swaps the outgoing model on messages.stream() from a warm cache peek", async () => {
+      mockBudget({ exceeded: false, near_limit: true });
+      await spendgauge.getBudgetStatus({ cacheSeconds: 60 }); // warm the cache first
+
+      const finalMessage = fakeMessage();
+      const fakeStream = {
+        finalMessage: vi.fn().mockResolvedValue(finalMessage),
+        [Symbol.asyncIterator]: async function* () {},
+      };
+      const streamFn = vi.fn().mockReturnValue(fakeStream);
+      const fakeClient: WrappableAnthropicClient = { messages: { create: vi.fn(), stream: streamFn } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5", cacheSeconds: 60 });
+
+      wrapped.messages.stream({ model: "claude-sonnet-4-6" });
+      expect(streamFn).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-haiku-4-5" }));
+    });
+
+    it("does not mutate the caller's own params object on messages.stream() either", async () => {
+      mockBudget({ exceeded: false, near_limit: true });
+      await spendgauge.getBudgetStatus({ cacheSeconds: 60 });
+
+      const fakeStream = {
+        finalMessage: vi.fn().mockResolvedValue(fakeMessage()),
+        [Symbol.asyncIterator]: async function* () {},
+      };
+      const streamFn = vi.fn().mockReturnValue(fakeStream);
+      const fakeClient: WrappableAnthropicClient = { messages: { create: vi.fn(), stream: streamFn } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5", cacheSeconds: 60 });
+
+      const params = { model: "claude-sonnet-4-6" };
+      wrapped.messages.stream(params);
+      expect(params.model).toBe("claude-sonnet-4-6");
+    });
+
+    it("does not swap the model on messages.stream() on a cold cache (fails open)", async () => {
+      const fakeStream = {
+        finalMessage: vi.fn().mockResolvedValue(fakeMessage()),
+        [Symbol.asyncIterator]: async function* () {},
+      };
+      const streamFn = vi.fn().mockReturnValue(fakeStream);
+      const fakeClient: WrappableAnthropicClient = { messages: { create: vi.fn(), stream: streamFn } };
+      const wrapped = wrap(fakeClient, spendgauge, { downgradeModel: "claude-haiku-4-5" });
+
+      wrapped.messages.stream({ model: "claude-sonnet-4-6" });
+      expect(streamFn).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-sonnet-4-6" }));
     });
   });
 

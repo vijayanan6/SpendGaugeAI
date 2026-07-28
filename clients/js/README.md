@@ -104,6 +104,35 @@ if (exceeded) {
 }
 ```
 
+## Budget-aware model downgrade — opt-in
+
+Off by default. Once spend is close to (but not yet over) the configured budget, the SDK
+automatically routes calls to a cheaper model instead of blocking them — the app keeps working,
+just cheaper, right up until the real limit — see
+[`docs/DESIGN.md` §8c](../../docs/DESIGN.md) for the full design. "Near the limit" reuses the same
+`warning_threshold` that already triggers a Discord low-credit warning, so there's no separate
+config. Independent of `enforce`; combine both for a two-stage policy — `exceeded` always wins if
+both trigger at once, so the downgrade never masks a real block. Cost is still attributed
+correctly with no extra code: usage is reported from the model Anthropic actually served, not the
+one you originally requested.
+
+```ts
+import { wrap } from "spendgaugeai-client";
+
+const client = wrap(new Anthropic(), spendgauge, { downgradeModel: "claude-haiku-4-5" });
+const response = await client.messages.create({ model: "claude-sonnet-4-6", ... }); // served on
+                                                                                     // sonnet unless near the cap
+```
+
+Or check it yourself:
+
+```ts
+const status = await spendgauge.getBudgetStatus(); // { startingBalance, remainingUsd, exceeded, nearLimit } | null
+if (status?.nearLimit) {
+  // route this call to a cheaper model yourself, without adopting wrap()
+}
+```
+
 ## Session scoping
 
 `session_id`/`project` propagate through `AsyncLocalStorage` (Node's async-context-local

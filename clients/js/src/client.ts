@@ -62,10 +62,24 @@ export interface CheckBudgetOptions {
   cacheSeconds?: number;
 }
 
+/**
+ * Full response shape of GET /usage/budget. `nearLimit` reuses the server's
+ * existing `warning_threshold` (the same dollar amount that already triggers
+ * the Discord low-credit warning) — "near your limit" means the same thing
+ * everywhere. `nearLimit` is only ever true when `exceeded` is false (they're
+ * mutually exclusive by construction on the server).
+ */
+export interface BudgetStatus {
+  startingBalance: number;
+  remainingUsd: number;
+  exceeded: boolean;
+  nearLimit: boolean;
+}
+
 interface BudgetCacheEntry {
   checkedAt: number;
   project?: string;
-  exceeded: boolean;
+  status: BudgetStatus;
 }
 
 export class SpendGaugeAIClient {
@@ -119,24 +133,25 @@ export class SpendGaugeAIClient {
     }
   }
 
-  private cachedBudget(project: string | undefined, cacheSeconds: number): boolean | null {
+  private cachedStatus(project: string | undefined, cacheSeconds: number): BudgetStatus | null {
     const cache = this.budgetCache;
     if (!cache || cache.project !== project || Date.now() - cache.checkedAt >= cacheSeconds * 1000) {
       return null;
     }
-    return cache.exceeded;
+    return cache.status;
   }
 
   /**
-   * Best-effort check of GET /usage/budget — the global spend cap (docs/
-   * DESIGN.md hard spend-cap enforcement). Returns true/false on a real
-   * answer, null on any failure (timeout, network error, non-2xx) — never
-   * throws. Cached per-project for `cacheSeconds` so a guarded app making
-   * many calls per minute doesn't hit the endpoint on every call.
+   * Best-effort fetch of GET /usage/budget — the full status
+   * (`startingBalance`, `remainingUsd`, `exceeded`, `nearLimit`). Returns
+   * null on any failure (timeout, network error, non-2xx) — never throws.
+   * Cached per-project for `cacheSeconds`; the same cached response backs
+   * both checkBudget()'s hard-block decision and wrap()'s `downgradeModel`
+   * decision.
    */
-  async checkBudget(options: CheckBudgetOptions = {}): Promise<boolean | null> {
+  async getBudgetStatus(options: CheckBudgetOptions = {}): Promise<BudgetStatus | null> {
     const { project, cacheSeconds = 5 } = options;
-    const cached = this.cachedBudget(project, cacheSeconds);
+    const cached = this.cachedStatus(project, cacheSeconds);
     if (cached !== null) return cached;
 
     const controller = new AbortController();
@@ -149,10 +164,20 @@ export class SpendGaugeAIClient {
         signal: controller.signal,
       });
       if (!resp.ok) return null;
-      const data = (await resp.json()) as { exceeded?: boolean };
-      const exceeded = Boolean(data.exceeded);
-      this.budgetCache = { checkedAt: Date.now(), project, exceeded };
-      return exceeded;
+      const data = (await resp.json()) as {
+        starting_balance?: number;
+        remaining_usd?: number;
+        exceeded?: boolean;
+        near_limit?: boolean;
+      };
+      const status: BudgetStatus = {
+        startingBalance: data.starting_balance ?? 0,
+        remainingUsd: data.remaining_usd ?? 0,
+        exceeded: Boolean(data.exceeded),
+        nearLimit: Boolean(data.near_limit),
+      };
+      this.budgetCache = { checkedAt: Date.now(), project, status };
+      return status;
     } catch {
       return null;
     } finally {
@@ -161,16 +186,27 @@ export class SpendGaugeAIClient {
   }
 
   /**
-   * Synchronous peek at the cached checkBudget() result — used internally by
-   * wrap()'s `messages.stream()` guard, which can't await an async check
-   * without breaking the synchronous EventEmitter-return contract the
-   * Anthropic SDK relies on for `.stream(...).on(...)` chaining. Only ever
-   * returns a definitive `true`; a cold or stale cache is treated as
-   * "proceed" (returns false), matching the fail-open default everywhere
-   * else in this SDK — not a network call itself.
+   * Best-effort check of GET /usage/budget's `exceeded` field — the global
+   * spend cap (docs/DESIGN.md hard spend-cap enforcement). Returns
+   * true/false on a real answer, null on any failure — never throws. Thin
+   * wrapper over getBudgetStatus(); same caching/semantics as before.
    */
-  peekCachedBudgetExceeded(options: CheckBudgetOptions = {}): boolean {
-    return this.cachedBudget(options.project, options.cacheSeconds ?? 5) === true;
+  async checkBudget(options: CheckBudgetOptions = {}): Promise<boolean | null> {
+    const status = await this.getBudgetStatus(options);
+    return status === null ? null : status.exceeded;
+  }
+
+  /**
+   * Synchronous peek at the cached getBudgetStatus() result — used
+   * internally by wrap()'s `messages.stream()` guard, which can't await an
+   * async check without breaking the synchronous EventEmitter-return
+   * contract the Anthropic SDK relies on for `.stream(...).on(...)`
+   * chaining. A cold or stale cache returns null — "proceed"/"no downgrade",
+   * matching the fail-open default everywhere else in this SDK — not a
+   * network call itself.
+   */
+  peekCachedBudgetStatus(options: CheckBudgetOptions = {}): BudgetStatus | null {
+    return this.cachedStatus(options.project, options.cacheSeconds ?? 5);
   }
 
   /**
