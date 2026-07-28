@@ -197,6 +197,7 @@ thing that breaks under real concurrent load.
 | `/health` | GET | none | Docker liveness check — no data in the response, gating it would break orchestration for no benefit |
 | `/usage/log` | POST | **Bearer** (API key) | Ingest one usage record |
 | `/usage/credit` | POST | **Bearer** (API key) | Save starting balance / alert thresholds / trigger reset |
+| `/usage/budget` | GET | **Bearer** (API key) | Global spend-cap status — `{starting_balance, remaining_usd, exceeded}` (§8b); polled by the SDKs' enforcement guard, not the dashboard |
 | `/usage` | GET | **Basic** | Dashboard (server-rendered Jinja2 template) |
 | `/usage/data` | GET | **Basic** | Aggregated JSON (`?project=` optional filter) |
 | `/static/*` | GET | **Basic** | Compiled CSS, vendored Alpine.js, chart JS (static files) |
@@ -586,6 +587,68 @@ language-independence goal):**
 are sufficient — no SDK required, by design. An official SDK for a third language is real,
 welcome future work (community-contributable, given the protocol is simple and stable), not
 something this project needs to pre-build speculatively.
+
+## 8b. Hard spend-cap enforcement — blocking a call before it bills you
+
+Alerting (§7) is notification, not enforcement — it tells you spend is high after the fact but
+never stops a call. This section closes that gap: an **opt-in, client-SDK-side pre-call gate**
+that can refuse to make an Anthropic call at all once the configured budget is exhausted. Not a
+proxy — SpendGaugeAI never sits in the request path to Anthropic (consistent with "own your
+data, zero traffic redirection"), it can only let the SDK decide not to place the call.
+
+**Scope: global cap only, fail-open.** Reuses the existing single-row `credit_config
+.starting_balance` as the ceiling — no per-project caps yet (a clean follow-on once this
+mechanism is proven). If SpendGaugeAI is unreachable, the guarded call proceeds — a
+monitoring-sidecar outage must never take down the real app, the same "reporting must never
+break the app" guarantee §8a establishes everywhere else, extended here to "and neither can
+enforcement, when it can't get a definitive answer."
+
+**The one deliberately-breaking exception in either SDK.** Every other `wrap()`/`.log()` path is
+fail-safe by design (§8a) — this is the sole part of the SDK that's *allowed* to raise into the
+caller's app, and only when the cap is confirmed (not merely suspected) exceeded. It must be
+unmistakably opt-in (`enforce: true`), off by default, and raise a typed exception the caller can
+catch: `SpendGaugeAIBudgetExceededError` (Python), `BudgetExceededError` (TS).
+
+**No new DB schema, no dashboard changes.** `database.budget_status(project=None) -> dict`
+returns `{starting_balance, remaining_usd, exceeded}` — `exceeded` is always `False` when
+`starting_balance <= 0` (unconfigured means no enforcement, the same convention §7's low-credit
+alert already used). `alerts.py`'s low-credit/digest checks now call this helper instead of
+duplicating the remaining-balance math a second time. `GET /usage/budget` (§4) is a thin
+`run_in_threadpool` wrapper around it, Bearer-only (this is a machine-facing check called by the
+SDK's enforcement guard, not the browser dashboard, so it doesn't need `require_bearer_or_basic`
+the way `/usage/credit` does) with an optional `?project=` filter — the cap itself stays global,
+but you can check one project's own spend against it.
+
+**Client-side opt-in only.** `wrap(client, ..., enforce=True)` (Python) /
+`wrap(client, spendgauge, { enforce: true })` (TS, `wrap()`'s new optional 3rd param) is what
+turns this on. `check_budget()`/`acheck_budget()` (Python) and `checkBudget()` (TS) are also
+public methods on the client, not just `wrap()`-internals, so a `.log()`-only integrator can gate
+its own call site without adopting `wrap()`. All three: return `True`/`False` on a real answer,
+`None`/`null` on any failure (timeout, network error, non-2xx) — never raise/throw. `wrap()`'s
+guard only blocks on a definitive `True`; `None` and `False` both mean "proceed."
+
+**Short TTL cache (default 5s) on the check result**, keyed per-project, to avoid doubling
+request volume against the shared rate limiter (§4) for an app making many Claude calls per
+minute — a few seconds of staleness on a budget *ceiling* is an acceptable trade against a
+network hop on every guarded call.
+
+**Guarded at all four of §8a's choke points in Python** (sync/async `create`, sync/async
+`stream`, including the raw `stream=True` path) — but the two languages diverge on *where
+exactly* the check runs for the `.stream()` path, for a real API-shape reason:
+
+- Python's `messages.stream(...)` returns a context manager that doesn't touch the network until
+  `__enter__` — so the guard lives in `_SyncStreamWrapper`/`_AsyncStreamWrapper`'s
+  `__enter__`/`__aenter__`, genuinely blocking before the real call, with a full async
+  `check_budget()`/`acheck_budget()` round-trip.
+- The JS/TS Anthropic SDK's `messages.stream(...)` returns its `MessageStream` **synchronously**,
+  by design, so callers can chain `.on(...)` before the network call resolves — wrapping it in a
+  Promise to await a real check would break that contract for every caller, not just guarded
+  ones. So the TS guard only ever consults `checkBudget()`'s cache **synchronously**
+  (`peekCachedBudgetExceeded()`) and, on a cold cache, fails open while kicking off a background
+  refresh. `messages.create(...)` in TS has no such constraint (it's already `Promise`-returning)
+  and gets the full awaited check like Python. Net effect: in a sustained `.stream()`-only TS
+  workload the cap is still enforced, just not necessarily on the very first call right after
+  it's crossed — a real, documented, narrower guarantee than Python's, not a silent gap.
 
 ## 9. Packaging
 

@@ -37,11 +37,43 @@ export interface SpendGaugeAIClientOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Raised by wrap()'s enforcement guard (`{ enforce: true }`) when GET
+ * /usage/budget confirms the configured global spend cap has been exceeded.
+ * The one deliberate exception to "reporting must never break the app" —
+ * enforcement is opt-in and meant to block. Any check failure (timeout,
+ * network error, non-2xx) fails open instead of throwing — see
+ * SpendGaugeAIClient.checkBudget().
+ */
+export class BudgetExceededError extends Error {
+  constructor(message = "SpendGaugeAI: global spend cap exceeded — call blocked") {
+    super(message);
+    this.name = "BudgetExceededError";
+  }
+}
+
+export interface CheckBudgetOptions {
+  /** Defaults to the account-wide cap (undefined), not this client's
+   * configured `project` — enforcement is deliberately global-only. Pass a
+   * project explicitly to check that project's own spend against the global
+   * cap instead. */
+  project?: string;
+  /** Cache TTL in seconds. Default 5. */
+  cacheSeconds?: number;
+}
+
+interface BudgetCacheEntry {
+  checkedAt: number;
+  project?: string;
+  exceeded: boolean;
+}
+
 export class SpendGaugeAIClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   readonly project: string;
   private readonly timeoutMs: number;
+  private budgetCache: BudgetCacheEntry | null = null;
 
   constructor(options: SpendGaugeAIClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -85,6 +117,60 @@ export class SpendGaugeAIClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private cachedBudget(project: string | undefined, cacheSeconds: number): boolean | null {
+    const cache = this.budgetCache;
+    if (!cache || cache.project !== project || Date.now() - cache.checkedAt >= cacheSeconds * 1000) {
+      return null;
+    }
+    return cache.exceeded;
+  }
+
+  /**
+   * Best-effort check of GET /usage/budget — the global spend cap (docs/
+   * DESIGN.md hard spend-cap enforcement). Returns true/false on a real
+   * answer, null on any failure (timeout, network error, non-2xx) — never
+   * throws. Cached per-project for `cacheSeconds` so a guarded app making
+   * many calls per minute doesn't hit the endpoint on every call.
+   */
+  async checkBudget(options: CheckBudgetOptions = {}): Promise<boolean | null> {
+    const { project, cacheSeconds = 5 } = options;
+    const cached = this.cachedBudget(project, cacheSeconds);
+    if (cached !== null) return cached;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const url = new URL(`${this.baseUrl}/usage/budget`);
+      if (project) url.searchParams.set("project", project);
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: controller.signal,
+      });
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as { exceeded?: boolean };
+      const exceeded = Boolean(data.exceeded);
+      this.budgetCache = { checkedAt: Date.now(), project, exceeded };
+      return exceeded;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Synchronous peek at the cached checkBudget() result — used internally by
+   * wrap()'s `messages.stream()` guard, which can't await an async check
+   * without breaking the synchronous EventEmitter-return contract the
+   * Anthropic SDK relies on for `.stream(...).on(...)` chaining. Only ever
+   * returns a definitive `true`; a cold or stale cache is treated as
+   * "proceed" (returns false), matching the fail-open default everywhere
+   * else in this SDK — not a network call itself.
+   */
+  peekCachedBudgetExceeded(options: CheckBudgetOptions = {}): boolean {
+    return this.cachedBudget(options.project, options.cacheSeconds ?? 5) === true;
   }
 
   /**

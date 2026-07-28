@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 import httpx
 
 from .database import (
+    budget_status,
     clear_alert_cooldown,
     clear_warning_cooldown,
     credit_status,
@@ -77,7 +78,8 @@ async def _maybe_send_low_credit_alert() -> None:
     stale window. Critical takes priority over a redundant warning.
     """
     cfg = credit_status()
-    starting_balance = cfg.get("starting_balance") or 0
+    budget = budget_status()
+    starting_balance = budget["starting_balance"]
     if starting_balance <= 0:
         return  # no balance configured — nothing to alert on
 
@@ -87,7 +89,7 @@ async def _maybe_send_low_credit_alert() -> None:
     warning_threshold = cfg.get("warning_threshold")
     if warning_threshold is None:
         warning_threshold = 5.0
-    remaining = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
+    remaining = budget["remaining_usd"]
 
     if remaining <= alert_threshold:
         if cfg.get("last_warning_sent_at"):
@@ -170,10 +172,9 @@ async def _maybe_send_daily_digest() -> None:
         f"Tokens: {d['input_tokens'] + d['output_tokens']:,}\n"
         f"Top tools: {top_tools}"
     )
-    starting_balance = cfg.get("starting_balance") or 0
-    if starting_balance > 0:
-        remaining = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
-        message += f"\nAvailable credit: **${remaining:.2f}**"
+    budget = budget_status()
+    if budget["starting_balance"] > 0:
+        message += f"\nAvailable credit: **${budget['remaining_usd']:.2f}**"
     if await _send_discord(message):
         mark_digest_sent(today_str)
 

@@ -212,6 +212,68 @@ def test_max_body_size_rejects_invalid_content_length_header(client):
     assert res.status_code == 400
 
 
+def test_usage_budget_requires_bearer(client):
+    res = client.get("/usage/budget")
+    assert res.status_code == 401
+
+
+def test_usage_budget_rejects_basic_auth(client):
+    # Unlike /usage/credit, this is a machine-facing route (checked by the
+    # SDK's enforcement guard, not the browser dashboard) — Bearer-only.
+    res = client.get("/usage/budget", auth=BASIC)
+    assert res.status_code == 401
+
+
+def test_usage_budget_unconfigured_never_exceeded(client):
+    res = client.get("/usage/budget", headers=BEARER)
+    assert res.status_code == 200
+    body = res.json()
+    assert body == {"starting_balance": 0.0, "remaining_usd": 0.0, "exceeded": False}
+
+
+def test_usage_budget_not_exceeded_under_cap(client):
+    client.post("/usage/credit", json={"starting_balance": 10.0}, headers=BEARER)
+    client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "input_tokens": 1000, "output_tokens": 1000},
+        headers=BEARER,
+    )
+    res = client.get("/usage/budget", headers=BEARER)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["exceeded"] is False
+    assert body["starting_balance"] == 10.0
+    assert body["remaining_usd"] == pytest.approx(10.0 - (0.003 + 0.015), rel=1e-6)
+
+
+def test_usage_budget_exceeded_over_cap(client):
+    client.post("/usage/credit", json={"starting_balance": 0.01}, headers=BEARER)
+    client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "input_tokens": 1_000_000, "output_tokens": 1_000_000},
+        headers=BEARER,
+    )
+    res = client.get("/usage/budget", headers=BEARER)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["exceeded"] is True
+    assert body["remaining_usd"] == 0.0
+
+
+def test_usage_budget_project_filter_scopes_spend(client):
+    client.post("/usage/credit", json={"starting_balance": 10.0}, headers=BEARER)
+    client.post(
+        "/usage/log",
+        json={"project": "other-app", "model": "claude-sonnet-4-6", "input_tokens": 1000, "output_tokens": 1000},
+        headers=BEARER,
+    )
+    res = client.get("/usage/budget", params={"project": "does-not-exist"}, headers=BEARER)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["exceeded"] is False
+    assert body["remaining_usd"] == 10.0
+
+
 def test_max_body_size_rejects_oversized_chunked_body_without_content_length(client):
     # Regression: the size check previously only looked at the Content-Length
     # header, so a chunked-encoded request (no Content-Length header at all)

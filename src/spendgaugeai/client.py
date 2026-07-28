@@ -20,6 +20,7 @@ import contextvars
 import functools
 import inspect
 import logging
+import time
 import uuid
 
 import httpx
@@ -27,6 +28,15 @@ import httpx
 logger = logging.getLogger("spendgaugeai")
 
 _session_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar("spendgauge_session", default=None)
+
+
+class SpendGaugeAIBudgetExceededError(Exception):
+    """Raised by wrap()'s enforcement guard (enforce=True) when GET
+    /usage/budget confirms the configured spend cap has been exceeded. This
+    is the one deliberate exception to "reporting must never break the
+    app" — enforcement is opt-in and meant to block. Any check failure
+    (timeout, network error, non-2xx) fails open instead of raising — see
+    SpendGaugeAIClient.check_budget()."""
 
 
 class SpendGaugeAIClient:
@@ -38,6 +48,7 @@ class SpendGaugeAIClient:
         self.api_key = api_key
         self.project = project
         self.timeout = timeout
+        self._budget_cache: tuple[float, str | None, bool] | None = None  # (checked_at, project, exceeded)
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -74,6 +85,64 @@ class SpendGaugeAIClient:
                 await http.post(f"{self.base_url}/usage/log", json=payload, headers=self._headers())
         except Exception as e:
             logger.debug(f"[spendgaugeai] usage report failed: {e}")
+
+    def _cached_budget(self, project: str | None, cache_seconds: float) -> bool | None:
+        cached = self._budget_cache
+        if cached is None:
+            return None
+        checked_at, cached_project, exceeded = cached
+        if cached_project != project or (time.monotonic() - checked_at) >= cache_seconds:
+            return None
+        return exceeded
+
+    def check_budget(self, *, project: str | None = None, cache_seconds: float = 5.0) -> bool | None:
+        """Best-effort check of GET /usage/budget — the global spend cap
+        (docs/DESIGN.md hard spend-cap enforcement). Returns True/False on a
+        real answer, None on any failure (timeout, network error, non-2xx) —
+        never raises. Cached per-project for `cache_seconds` so a guarded app
+        making many calls per minute doesn't hit the endpoint on every call.
+
+        `project` defaults to None (the account-wide cap), not self.project —
+        enforcement is deliberately global-only; pass a project explicitly to
+        check that project's own spend against the global cap instead.
+        """
+        cached = self._cached_budget(project, cache_seconds)
+        if cached is not None:
+            return cached
+        try:
+            resp = httpx.get(
+                f"{self.base_url}/usage/budget",
+                params={"project": project} if project else None,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            exceeded = bool(resp.json().get("exceeded"))
+            self._budget_cache = (time.monotonic(), project, exceeded)
+            return exceeded
+        except Exception as e:
+            logger.debug(f"[spendgaugeai] budget check failed: {e}")
+            return None
+
+    async def acheck_budget(self, *, project: str | None = None, cache_seconds: float = 5.0) -> bool | None:
+        """Async counterpart of check_budget() — same semantics."""
+        cached = self._cached_budget(project, cache_seconds)
+        if cached is not None:
+            return cached
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as http:
+                resp = await http.get(
+                    f"{self.base_url}/usage/budget",
+                    params={"project": project} if project else None,
+                    headers=self._headers(),
+                )
+            resp.raise_for_status()
+            exceeded = bool(resp.json().get("exceeded"))
+            self._budget_cache = (time.monotonic(), project, exceeded)
+            return exceeded
+        except Exception as e:
+            logger.debug(f"[spendgaugeai] budget check failed: {e}")
+            return None
 
     def spendgauge_session(self, session_id: str | None = None, project: str | None = None) -> "_SessionContext":
         """Scope session_id/project to the current (async) task, e.g.:
@@ -276,13 +345,20 @@ class _SyncStreamWrapper:
     `with` block exits, in a finally, so it fires whether the caller consumes
     the whole stream, breaks early, or the stream errors."""
 
-    def __init__(self, manager, spendgauge: SpendGaugeAIClient, model: str):
+    def __init__(self, manager, spendgauge: SpendGaugeAIClient, model: str, enforce: bool = False, enforce_cache_seconds: float = 5.0):
         self._manager = manager
         self._spendgauge = spendgauge
         self._model = model
         self._stream = None
+        self._enforce = enforce
+        self._enforce_cache_seconds = enforce_cache_seconds
 
     def __enter__(self):
+        # Checked here, not at wrap-time construction — messages.stream(...)
+        # itself doesn't hit the network; entering the `with` block does, so
+        # this is the actual choke point before the real Anthropic call.
+        if self._enforce and self._spendgauge.check_budget(cache_seconds=self._enforce_cache_seconds):
+            raise SpendGaugeAIBudgetExceededError("SpendGaugeAI: global spend cap exceeded — call blocked")
         self._stream = self._manager.__enter__()
         return self._stream
 
@@ -298,13 +374,17 @@ class _SyncStreamWrapper:
 
 
 class _AsyncStreamWrapper:
-    def __init__(self, manager, spendgauge: SpendGaugeAIClient, model: str):
+    def __init__(self, manager, spendgauge: SpendGaugeAIClient, model: str, enforce: bool = False, enforce_cache_seconds: float = 5.0):
         self._manager = manager
         self._spendgauge = spendgauge
         self._model = model
         self._stream = None
+        self._enforce = enforce
+        self._enforce_cache_seconds = enforce_cache_seconds
 
     async def __aenter__(self):
+        if self._enforce and await self._spendgauge.acheck_budget(cache_seconds=self._enforce_cache_seconds):
+            raise SpendGaugeAIBudgetExceededError("SpendGaugeAI: global spend cap exceeded — call blocked")
         self._stream = await self._manager.__aenter__()
         return self._stream
 
@@ -319,20 +399,37 @@ class _AsyncStreamWrapper:
             return await self._manager.__aexit__(exc_type, exc, tb)
 
 
-def wrap(anthropic_client, *, base_url: str, api_key: str, project: str = "default", timeout: float = 2.0):
+def wrap(
+    anthropic_client, *, base_url: str, api_key: str, project: str = "default", timeout: float = 2.0,
+    enforce: bool = False, enforce_cache_seconds: float = 5.0,
+):
     """Patch `messages.create` and `messages.stream` on `anthropic_client` (an
     `Anthropic` or `AsyncAnthropic` instance — detected automatically) so every
     call through it reports itself to SpendGaugeAI. Returns the same client
-    object, mutated in place, for `client = wrap(Anthropic())`-style use."""
+    object, mutated in place, for `client = wrap(Anthropic())`-style use.
+
+    `enforce=True` opts into hard spend-cap enforcement: before each call,
+    checks the global budget cap (SpendGaugeAIClient.check_budget(), cached
+    for `enforce_cache_seconds`) and raises SpendGaugeAIBudgetExceededError if
+    it's confirmed exceeded. This is the one part of wrap() that's allowed to
+    break the caller's app — everything else stays fail-safe. Off by default;
+    fails open (proceeds) on any check failure, same as check_budget() itself.
+    """
     spendgauge = SpendGaugeAIClient(base_url=base_url, api_key=api_key, project=project, timeout=timeout)
     messages_obj = anthropic_client.messages
     original_create = messages_obj.create
     original_stream = messages_obj.stream
     is_async_client = inspect.iscoroutinefunction(original_create)
 
+    def _raise_if_exceeded(exceeded: bool | None) -> None:
+        if exceeded:
+            raise SpendGaugeAIBudgetExceededError("SpendGaugeAI: global spend cap exceeded — call blocked")
+
     if is_async_client:
         @functools.wraps(original_create)
         async def patched_create(*args, **kwargs):
+            if enforce:
+                _raise_if_exceeded(await spendgauge.acheck_budget(cache_seconds=enforce_cache_seconds))
             response = await original_create(*args, **kwargs)
             # stream=True routes through the raw event iterator (no populated
             # .usage/.content on `response` itself) — distinct from .stream(),
@@ -349,10 +446,12 @@ def wrap(anthropic_client, *, base_url: str, api_key: str, project: str = "defau
         @functools.wraps(original_stream)
         def patched_stream(*args, **kwargs):
             manager = original_stream(*args, **kwargs)
-            return _AsyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"))
+            return _AsyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"), enforce, enforce_cache_seconds)
     else:
         @functools.wraps(original_create)
         def patched_create(*args, **kwargs):
+            if enforce:
+                _raise_if_exceeded(spendgauge.check_budget(cache_seconds=enforce_cache_seconds))
             response = original_create(*args, **kwargs)
             if kwargs.get("stream"):
                 return _SyncRawStreamWrapper(response, spendgauge, kwargs.get("model", "unknown"))
@@ -365,7 +464,7 @@ def wrap(anthropic_client, *, base_url: str, api_key: str, project: str = "defau
         @functools.wraps(original_stream)
         def patched_stream(*args, **kwargs):
             manager = original_stream(*args, **kwargs)
-            return _SyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"))
+            return _SyncStreamWrapper(manager, spendgauge, kwargs.get("model", "unknown"), enforce, enforce_cache_seconds)
 
     messages_obj.create = patched_create
     messages_obj.stream = patched_stream

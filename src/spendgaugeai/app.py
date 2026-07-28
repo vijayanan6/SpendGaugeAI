@@ -180,6 +180,11 @@ async def post_usage_credit(req: CreditRequest):
     return {"saved": True}
 
 
+@app.get("/usage/budget", dependencies=[Depends(auth.require_bearer), Depends(enforce_rate_limit)])
+async def get_usage_budget(project: str | None = Query(default=None)):
+    return await run_in_threadpool(database.budget_status, project=project)
+
+
 @app.get("/usage/data", dependencies=[Depends(auth.require_basic)])
 async def get_usage_data(project: str | None = Query(default=None)):
     data = await run_in_threadpool(database.usage_summary, project=project)

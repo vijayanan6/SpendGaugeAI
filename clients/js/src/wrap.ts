@@ -17,7 +17,7 @@
  * - Every report is wrapped in try/catch — reporting usage must never be
  *   able to break the caller's real request.
  */
-import type { SpendGaugeAIClient, UsageLogParams } from "./client.js";
+import { BudgetExceededError, type SpendGaugeAIClient, type UsageLogParams } from "./client.js";
 
 interface UsageLike {
   input_tokens?: number;
@@ -170,12 +170,43 @@ export interface WrappableAnthropicClient {
   };
 }
 
-export function wrap<T extends WrappableAnthropicClient>(anthropicClient: T, spendgauge: SpendGaugeAIClient): T {
+export interface WrapOptions {
+  /**
+   * Opt into hard spend-cap enforcement: checks the global budget cap
+   * (SpendGaugeAIClient.checkBudget(), cached for `enforceCacheSeconds`)
+   * before each call and throws BudgetExceededError if it's confirmed
+   * exceeded. This is the one part of wrap() that's allowed to break the
+   * caller's app — everything else stays fail-safe. Off by default; fails
+   * open (proceeds) on any check failure, same as checkBudget() itself.
+   *
+   * `messages.create(...)` (including the raw `stream: true` path) awaits a
+   * real check before the request goes out. `messages.stream(...)` can't —
+   * it returns its MessageStream synchronously by design, so callers can
+   * chain `.on(...)` before the network call resolves — so its guard only
+   * ever consults the cache synchronously (peekCachedBudgetExceeded) and
+   * opportunistically refreshes it in the background. In a sustained
+   * `.stream()`-only workload the cap still gets enforced, just not
+   * necessarily on the very first call after it's crossed.
+   */
+  enforce?: boolean;
+  /** Cache TTL in seconds for the enforcement check. Default 5. */
+  enforceCacheSeconds?: number;
+}
+
+export function wrap<T extends WrappableAnthropicClient>(
+  anthropicClient: T,
+  spendgauge: SpendGaugeAIClient,
+  options: WrapOptions = {},
+): T {
+  const { enforce = false, enforceCacheSeconds = 5 } = options;
   const messages = anthropicClient.messages;
   const originalCreate = messages.create.bind(messages);
   const originalStream = messages.stream.bind(messages);
 
   messages.create = (async (...args: unknown[]) => {
+    if (enforce && (await spendgauge.checkBudget({ cacheSeconds: enforceCacheSeconds }))) {
+      throw new BudgetExceededError();
+    }
     const params = args[0] as { model?: string; stream?: boolean } | undefined;
     const requestedModel = params?.model ?? "unknown";
     const response = await originalCreate(...args);
@@ -187,6 +218,14 @@ export function wrap<T extends WrappableAnthropicClient>(anthropicClient: T, spe
   }) as typeof messages.create;
 
   messages.stream = ((...args: unknown[]) => {
+    if (enforce) {
+      if (spendgauge.peekCachedBudgetExceeded({ cacheSeconds: enforceCacheSeconds })) {
+        throw new BudgetExceededError();
+      }
+      // Can't await here without breaking messages.stream()'s synchronous
+      // return contract — refresh the cache in the background instead.
+      void spendgauge.checkBudget({ cacheSeconds: enforceCacheSeconds }).catch(() => {});
+    }
     const stream = originalStream(...args);
     const requestedModel = (args[0] as { model?: string } | undefined)?.model ?? "unknown";
     Promise.resolve(stream.finalMessage())

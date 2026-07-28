@@ -77,3 +77,64 @@ describe("SpendGaugeAIClient.log", () => {
     expect(body.session_id.length).toBeGreaterThan(0);
   });
 });
+
+describe("SpendGaugeAIClient.checkBudget", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns true when the server reports the cap exceeded", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exceeded: true }), { status: 200 }));
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+
+    await expect(client.checkBudget()).resolves.toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url.toString()).toBe("http://localhost:8000/usage/budget");
+    expect(init.headers.Authorization).toBe("Bearer key123");
+  });
+
+  it("includes project as a query param when given, omits it otherwise", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exceeded: false }), { status: 200 }));
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+
+    await client.checkBudget({ project: "demo-app" });
+    expect(fetchMock.mock.calls[0][0].toString()).toBe("http://localhost:8000/usage/budget?project=demo-app");
+  });
+
+  it("returns null (fails open) on network failure", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+    await expect(client.checkBudget()).resolves.toBeNull();
+  });
+
+  it("returns null (fails open) on a non-2xx response", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 401 }));
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+    await expect(client.checkBudget()).resolves.toBeNull();
+  });
+
+  it("caches the result within cacheSeconds instead of refetching", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exceeded: false }), { status: 200 }));
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+
+    await client.checkBudget({ cacheSeconds: 60 });
+    await client.checkBudget({ cacheSeconds: 60 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("peekCachedBudgetExceeded reflects a warm cache and defaults to false when cold", async () => {
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+    expect(client.peekCachedBudgetExceeded()).toBe(false);
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ exceeded: true }), { status: 200 }));
+    await client.checkBudget({ cacheSeconds: 60 });
+    expect(client.peekCachedBudgetExceeded({ cacheSeconds: 60 })).toBe(true);
+  });
+});

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SpendGaugeAIClient } from "../src/client.js";
+import { BudgetExceededError, SpendGaugeAIClient } from "../src/client.js";
 import { wrap, type WrappableAnthropicClient } from "../src/wrap.js";
 
 function fakeMessage(overrides: Record<string, unknown> = {}) {
@@ -162,5 +162,90 @@ describe("wrap()", () => {
 
     await vi.waitFor(() => expect(fakeStream.finalMessage).toHaveBeenCalled());
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  describe("wrap(..., { enforce: true })", () => {
+    function mockBudget(exceeded: boolean) {
+      fetchMock.mockImplementation(async (url: string | URL) => {
+        if (url.toString().includes("/usage/budget")) {
+          return new Response(JSON.stringify({ exceeded }), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      });
+    }
+
+    it("throws BudgetExceededError before create() reaches the Anthropic client when the cap is exceeded", async () => {
+      mockBudget(true);
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true });
+
+      await expect(wrapped.messages.create({ model: "claude-sonnet-4-6" })).rejects.toThrow(BudgetExceededError);
+      expect(createFn).not.toHaveBeenCalled();
+    });
+
+    it("throws BudgetExceededError before create({ stream: true }) reaches the Anthropic client", async () => {
+      mockBudget(true);
+      const createFn = vi.fn();
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true });
+
+      await expect(wrapped.messages.create({ model: "claude-sonnet-4-6", stream: true })).rejects.toThrow(BudgetExceededError);
+      expect(createFn).not.toHaveBeenCalled();
+    });
+
+    it("proceeds normally through create() when enforce is on but the cap is not exceeded", async () => {
+      mockBudget(false);
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true });
+
+      const response = await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      expect(response.content[0].text).toBe("hello");
+      expect(createFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("never checks the budget when enforce is left off (default)", async () => {
+      const createFn = vi.fn().mockResolvedValue(fakeMessage());
+      const fakeClient: WrappableAnthropicClient = { messages: { create: createFn, stream: vi.fn() } };
+      const wrapped = wrap(fakeClient, spendgauge);
+
+      await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+      const budgetCalls = fetchMock.mock.calls.filter(([url]) => url.toString().includes("/usage/budget"));
+      expect(budgetCalls).toHaveLength(0);
+    });
+
+    it("throws synchronously from messages.stream() when a warm cache already shows exceeded", async () => {
+      mockBudget(true);
+      await spendgauge.checkBudget({ cacheSeconds: 60 }); // warm the cache first
+
+      const streamFn = vi.fn();
+      const fakeClient: WrappableAnthropicClient = { messages: { create: vi.fn(), stream: streamFn } };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true, enforceCacheSeconds: 60 });
+
+      expect(() => wrapped.messages.stream({ model: "claude-sonnet-4-6" })).toThrow(BudgetExceededError);
+      expect(streamFn).not.toHaveBeenCalled();
+    });
+
+    it("proceeds through messages.stream() on a cold cache (fails open) and refreshes it in the background", async () => {
+      mockBudget(false);
+      const finalMessage = fakeMessage();
+      const fakeStream = {
+        finalMessage: vi.fn().mockResolvedValue(finalMessage),
+        [Symbol.asyncIterator]: async function* () {},
+      };
+      const streamFn = vi.fn().mockReturnValue(fakeStream);
+      const fakeClient: WrappableAnthropicClient = { messages: { create: vi.fn(), stream: streamFn } };
+      const wrapped = wrap(fakeClient, spendgauge, { enforce: true });
+
+      const stream = wrapped.messages.stream({ model: "claude-sonnet-4-6" });
+      expect(stream).toBe(fakeStream); // cold cache -> proceeds synchronously, fails open
+      expect(streamFn).toHaveBeenCalledTimes(1);
+
+      await vi.waitFor(() => {
+        const budgetCalls = fetchMock.mock.calls.filter(([url]) => url.toString().includes("/usage/budget"));
+        expect(budgetCalls.length).toBeGreaterThan(0);
+      });
+    });
   });
 });

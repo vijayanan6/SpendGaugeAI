@@ -56,6 +56,38 @@ await spendgauge.log({
 `model` plus token counts are the only required fields — `project`/`sessionId` default
 sensibly if omitted.
 
+## Hard spend-cap enforcement — opt-in
+
+Off by default. Once turned on, refuses to make the next Anthropic call at all when the global
+budget (set on the dashboard or via `POST /usage/credit`) is exhausted — actual enforcement, not
+just a Discord alert after the fact. Global cap only, fails open (proceeds) if SpendGaugeAI is
+unreachable — see [`docs/DESIGN.md` §8b](../../docs/DESIGN.md) for the full design, including a
+JS-specific caveat: `messages.stream(...)` returns synchronously by design (so you can chain
+`.on(...)` before the request resolves), so its guard can only consult a short-lived cache
+synchronously rather than awaiting a fresh check like `messages.create(...)` does.
+
+```ts
+import { BudgetExceededError, wrap } from "spendgaugeai-client";
+
+const client = wrap(new Anthropic(), spendgauge, { enforce: true });
+try {
+  const response = await client.messages.create({ ... });
+} catch (err) {
+  if (err instanceof BudgetExceededError) {
+    // blocked before it billed you
+  }
+}
+```
+
+Or check it yourself at a specific call site without adopting `wrap()`:
+
+```ts
+const exceeded = await spendgauge.checkBudget(); // true | false | null (null = check failed, fail open)
+if (exceeded) {
+  // skip the call, queue it, whatever fits your app
+}
+```
+
 ## Session scoping
 
 `session_id`/`project` propagate through `AsyncLocalStorage` (Node's async-context-local

@@ -2,9 +2,10 @@
 
 **AI FinOps for self-hosted Claude API developers.** Not a usage-log viewer — a financial
 control center for your Claude spend: set a budget, watch burn rate and runway in real time,
-and get alerted before you run out. No account, no SDK wrapping — your app POSTs token usage
-after each call, SpendGaugeAI computes cost, enforces the budget policy you set, and optionally
-pings Discord when something needs attention.
+and get alerted before you run out. Your app POSTs token usage after each call (or wraps its
+Anthropic client once, no per-call changes needed), SpendGaugeAI computes cost, tracks it
+against the budget policy you set, pings Discord when something needs attention, and — opt-in —
+can refuse to make a call at all once your cap is exhausted, before it bills you.
 
 > **Status: v1 implementation working end-to-end.** Backend (auth, ingestion, credit tracking,
 > Discord alerts), both official client SDKs (Python and JS/TS), a first-pass Jinja2/Alpine.js
@@ -52,14 +53,40 @@ response = client.messages.create(...)   # reports automatically, no other code 
 **TypeScript/JS** — same pattern:
 
 ```ts
-import { wrap } from "spendgaugeai-client";
+import { SpendGaugeAIClient, wrap } from "spendgaugeai-client";
 import Anthropic from "@anthropic-ai/sdk";
 
-const client = wrap(new Anthropic(), { baseUrl: "http://localhost:8000", apiKey: "...", project: "my-app" });
+const spendgauge = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "...", project: "my-app" });
+const client = wrap(new Anthropic(), spendgauge);
 const response = await client.messages.create({ ... });   // reports automatically
 ```
 `apiKey`/`api_key` above is the credential printed when you first run `spendgaugeai serve` — see
 [Quickstart](#quickstart) below.
+
+**Opt-in hard spend-cap enforcement** — refuse a call outright once your budget's exhausted,
+instead of only alerting after the fact (`docs/DESIGN.md` §8b):
+
+```python
+from spendgaugeai import SpendGaugeAIBudgetExceededError, wrap
+
+client = wrap(anthropic.Anthropic(), base_url="...", api_key="...", enforce=True)
+try:
+    response = client.messages.create(...)
+except SpendGaugeAIBudgetExceededError:
+    ...  # your call was blocked before it billed you
+```
+```ts
+import { BudgetExceededError, wrap } from "spendgaugeai-client";
+
+const client = wrap(new Anthropic(), spendgauge, { enforce: true });
+try {
+  const response = await client.messages.create({ ... });
+} catch (err) {
+  if (err instanceof BudgetExceededError) { /* blocked before it billed you */ }
+}
+```
+Off by default, global cap only, fails open if SpendGaugeAI is unreachable — see `docs/DESIGN.md`
+§8b for the full design and the one JS-specific caveat around `messages.stream(...)`.
 
 **Why one `wrap()` call is enough — what it actually does:** `wrap()` doesn't return a new
 object; it mutates the client you pass it in place, replacing `messages.create`/`messages.stream`
@@ -159,11 +186,17 @@ reactivity rather than rebuilt from scratch in a different framework.
 - Token/cost accounting per model, per project, per session, per tool — the ledger underneath
   the policy, not the headline feature
 - Discord alerts: low balance (two-tier), spend spikes, daily digest, stale-pricing warnings —
-  policy enforcement, not just notifications
-- A single shared API key gates the two mutating endpoints (`POST /usage/log`, `POST /usage/credit`)
+  after-the-fact notifications, so you know before you check the dashboard
+- **Hard spend-cap enforcement** (opt-in, `wrap(client, ..., enforce=True)`): once your
+  configured budget is exhausted, the SDK refuses to make the next Anthropic call at all,
+  raising a typed exception your app can catch — actual policy enforcement, not just a
+  notification. Global cap, fails open if SpendGaugeAI is unreachable — see `docs/DESIGN.md` §8b.
+- A single shared API key gates the mutating/enforcement endpoints (`POST /usage/log`,
+  `POST /usage/credit`, `GET /usage/budget`)
 - Official Python (`spendgaugeai`) and TypeScript/JS (`spendgaugeai-client`) SDKs, both with an
-  auto-reporting `wrap()` and a manual `.log()` — any other language integrates via the
-  documented raw HTTP contract, no SDK required
+  auto-reporting `wrap()`, a manual `.log()`, and `check_budget()`/`checkBudget()` for gating a
+  call site directly — any other language integrates via the documented raw HTTP contract, no
+  SDK required
 
 **Not in v1** (see `docs/DESIGN.md` §1 for the full list and why): multi-tenant auth / per-project
 keys, a hosted PyPI release, and the log-viewer/conversations features that are specific to the

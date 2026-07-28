@@ -327,6 +327,22 @@ def credit_status(project: str | None = None) -> dict:
     return cfg
 
 
+def budget_status(project: str | None = None) -> dict:
+    """Global spend-cap status against credit_config.starting_balance — the
+    shared math behind both the low-credit alert check and GET /usage/budget
+    (hard spend-cap enforcement). `starting_balance <= 0` means no cap is
+    configured, so `exceeded` is always False in that case (unconfigured =
+    no enforcement, same convention as the alert check)."""
+    cfg = credit_status(project=project)
+    starting_balance = cfg.get("starting_balance") or 0
+    remaining_usd = max(starting_balance - (cfg.get("period_cost_usd") or 0), 0)
+    return {
+        "starting_balance": starting_balance,
+        "remaining_usd": remaining_usd,
+        "exceeded": starting_balance > 0 and remaining_usd <= 0,
+    }
+
+
 def credit_set(starting_balance: float, alert_threshold: float = 1.0, reset: bool = False, warning_threshold: float | None = None) -> None:
     """Save or update the starting credit balance and alert thresholds.
 
