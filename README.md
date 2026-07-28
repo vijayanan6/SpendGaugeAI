@@ -175,6 +175,12 @@ or with Docker:
 docker compose up
 ```
 
+All usage/budget data lives in `./data/spendgaugeai.db` — a bind mount
+(`./data:/data` in `docker-compose.yml`), not stored inside the container. That means it's a real
+file on your host at whatever path you cloned this repo to, survives `docker compose up --build`
+rebuilding the image and recreating the container, and needs no special backup step beyond
+copying that one file/folder. Deleting the container is safe; deleting `./data` is not.
+
 No Node.js required to **run** SpendGaugeAI — for either path, or even for building the server
 from source. The dashboard is server-rendered (Jinja2 + Alpine.js), styled with Tailwind's
 standalone CLI (a downloaded binary, not an npm package); there's no JavaScript build pipeline
