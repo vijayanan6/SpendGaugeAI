@@ -172,19 +172,31 @@ pytest tests/                                     # backend
 - **`session_id` is optional on `POST /usage/log`**, server-generates a UUID if omitted. Found
   in review: the original schema had it `NOT NULL` with no default, which blocked even the
   simplest integration (a script with no session concept) from sending its first request.
-- **`wrap()` has four specific, resolved edges — implement all four, don't ship a naive version:**
-  (1) patch `messages.create` **and** `messages.stream`, on **both** `Anthropic` and
-  `AsyncAnthropic` — patching only the sync client silently covers nothing for the source
-  project's dogfooding target, which is async-only; (2) streaming reports from the final
-  accumulated message inside a `finally`, forwarding every event unchanged to the caller —
-  without this, streaming calls (the majority pattern) go silently unreported; (3) `session_id`
-  propagates via a `contextvars.ContextVar` (`client.spendgauge_session(...)`), never a mutable
-  attribute on the client object — a shared long-lived client under concurrent requests would
-  otherwise clobber sessions together; (4) `tools_used` comes from `tool_use`-type content
-  blocks, `web_search_requests` comes from `response.usage.server_tool_use` — two different
-  places, not one; see §8a of `docs/DESIGN.md` for the exact extraction code. Patching at the
-  `messages.create`/`messages.stream` level (not a higher convenience wrapper) means
-  `tool_runner`'s internal loop is covered automatically — don't special-case it.
+- **`wrap()` has six specific, resolved edges — implement all six, don't ship a naive version.**
+  The first four came from design review; the last two were only found by wiring a real app to a
+  real `tool_runner`-based agentic loop and a real production server — every prior test used fake
+  Python clients built from plain `async def` functions, which happened to mask both. (1) patch
+  `messages.create` **and** `messages.stream`, on **both** `Anthropic` and `AsyncAnthropic` —
+  patching only the sync client silently covers nothing for an async-only app; (2) streaming
+  reports from the final accumulated message inside a `finally`, forwarding every event unchanged
+  to the caller — without this, streaming calls (the majority pattern) go silently unreported;
+  (3) `session_id` propagates via a `contextvars.ContextVar` (`client.spendgauge_session(...)`),
+  never a mutable attribute on the client object — a shared long-lived client under concurrent
+  requests would otherwise clobber sessions together; (4) `tools_used` comes from `tool_use`-type
+  content blocks, `web_search_requests` comes from `response.usage.server_tool_use` — two
+  different places, not one; (5) **patching `client.messages` alone does NOT cover
+  `tool_runner`** — `client.beta.messages` is a genuinely separate resource object in the real SDK
+  (`client.messages is client.beta.messages` → `False`, confirmed live), and `tool_runner` lives
+  exclusively on `.beta`; `wrap()` must patch both resources, and must also patch `.parse()`
+  alongside `.create()`/`.stream()` on each — `tool_runner`'s non-streaming mode calls `.parse()`,
+  never `.create()`; (6) **sync/async branch selection can't use
+  `inspect.iscoroutinefunction(original_create)` directly** — the real SDK wraps its `async def`
+  methods in an internal sync dispatcher that makes this report `False` even though normal callers
+  can `await` it fine; use `inspect.iscoroutinefunction(inspect.unwrap(original_create))` instead,
+  or the sync branch runs against a real async client and reports on an **unawaited coroutine**
+  (all-zero tokens/cost, real API call still works — which is exactly why this was invisible until
+  tested against a real client). See §8a of `docs/DESIGN.md` for the exact extraction code and
+  full story behind edges 5–6.
 
 ## Relationship to the MCP Learning Project
 

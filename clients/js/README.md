@@ -43,6 +43,22 @@ reporting with zero further changes. Streaming reports once the stream completes
 per-chunk. Every report is wrapped in its own try/catch, so a SpendGaugeAI outage can never
 break a real request.
 
+**Using tools / an agentic loop?** `wrap()` covers `client.beta.messages.toolRunner(...)` too —
+same one `wrap()` call, nothing else to change:
+
+```ts
+const client = wrap(new Anthropic(), spendgauge);
+
+const runner = client.beta.messages.toolRunner({
+  model: "claude-sonnet-4-6", max_tokens: 1024, tools: myTools, messages: [...],
+});
+for await (const msg of runner) {
+  // every underlying call toolRunner makes reports itself automatically
+}
+```
+`client.beta.messages` is a genuinely different resource object than `client.messages` in the
+real SDK, and `toolRunner` lives on it — `wrap()` patches both.
+
 ## `.log()` — manual, for more control
 
 ```ts
@@ -103,8 +119,9 @@ await spendgauge.spendgaugeSession({ sessionId: "abc123", project: "my-app" }, a
 
 ## Design
 
-Full integration design (including the four resolved `wrap()` edge cases): see
-[`docs/DESIGN.md` §8a](../../docs/DESIGN.md) in the main repo.
+Full integration design (including all six resolved `wrap()` edge cases — the last two, covering
+`client.beta.messages`/`toolRunner`, only found by wiring a real app to a real production server):
+see [`docs/DESIGN.md` §8a](../../docs/DESIGN.md) in the main repo.
 
 ## License
 

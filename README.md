@@ -88,6 +88,23 @@ try {
 Off by default, global cap only, fails open if SpendGaugeAI is unreachable — see `docs/DESIGN.md`
 §8b for the full design and the one JS-specific caveat around `messages.stream(...)`.
 
+**Using tools / an agentic loop?** `wrap()` covers `client.beta.messages.tool_runner(...)` too —
+no different from the plain example above, same one `wrap()` call, nothing else to change:
+
+```python
+client = wrap(anthropic.AsyncAnthropic(), base_url="http://localhost:8000", api_key="...")
+
+runner = client.beta.messages.tool_runner(
+    model="claude-sonnet-4-6", max_tokens=1024, tools=my_tools, messages=[...],
+)
+async for msg in runner:
+    ...  # every underlying call tool_runner makes reports itself automatically
+```
+This is deliberately called out, not just implied: `client.beta.messages` is a different resource
+object than `client.messages` in the real SDK, and `tool_runner` lives on it — `wrap()` patches
+both, plus the extra method (`.parse()`) `tool_runner`'s non-streaming mode actually calls
+internally. See `docs/DESIGN.md` §8a edges 5–6 if you're curious why this needed its own callout.
+
 **Why one `wrap()` call is enough — what it actually does:** `wrap()` doesn't return a new
 object; it mutates the client you pass it in place, replacing `messages.create`/`messages.stream`
 on that exact instance, then hands the same object back. Since an app almost always builds one
