@@ -188,7 +188,17 @@ async def get_usage_budget(project: str | None = Query(default=None)):
 @app.get("/usage/data", dependencies=[Depends(auth.require_basic)])
 async def get_usage_data(project: str | None = Query(default=None)):
     data = await run_in_threadpool(database.usage_summary, project=project)
-    data["credit"] = await run_in_threadpool(database.credit_status, project=project)
+    # Deliberately global (project=None), never the ?project= filter above:
+    # the budget itself is one shared pool across every project (§8b), so
+    # scoping "remaining balance" to one project's own spend would silently
+    # show a falsely optimistic number — e.g. a project that's barely spent
+    # anything would look like it still has the *entire* starting balance
+    # available, even after other projects have already spent most of the
+    # real shared pool. The dashboard's other breakdowns (by_model, by_day,
+    # etc.) stay correctly project-filtered; only the credit/remaining figure
+    # must always reflect true shared reality regardless of which project
+    # you're currently viewing.
+    data["credit"] = await run_in_threadpool(database.credit_status, project=None)
     return data
 
 

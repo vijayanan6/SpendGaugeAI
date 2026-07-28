@@ -124,6 +124,30 @@ def test_usage_data_with_project_filter_and_tools(client):
     assert data["by_project"][0]["project"] == "demo-app"
 
 
+def test_usage_data_credit_stays_global_regardless_of_project_filter(client):
+    # Regression: the "remaining balance" gauge used to scope period_cost_usd
+    # to the ?project= filter, so a project with barely any spend of its own
+    # looked like it still had the *entire* starting balance available, even
+    # after other projects had already spent most of the real shared pool.
+    # The budget is one shared pool (§8b) — credit must always reflect true
+    # global reality, no matter which project's other stats you're viewing.
+    client.post("/usage/credit", json={"starting_balance": 10.0}, headers=BEARER)
+    client.post(
+        "/usage/log",
+        json={"project": "big-spender", "model": "claude-sonnet-4-6", "input_tokens": 1_000_000, "output_tokens": 1_000_000},
+        headers=BEARER,
+    )
+    client.post(
+        "/usage/log",
+        json={"project": "tiny-project", "model": "claude-haiku-4-5", "input_tokens": 10, "output_tokens": 10},
+        headers=BEARER,
+    )
+    unfiltered = client.get("/usage/data", auth=BASIC).json()["credit"]
+    filtered = client.get("/usage/data", params={"project": "tiny-project"}, auth=BASIC).json()["credit"]
+    assert filtered["period_cost_usd"] == unfiltered["period_cost_usd"]
+    assert filtered["period_cost_usd"] > 1.0  # dominated by big-spender's real cost, not tiny-project's own ~$0
+
+
 def test_usage_data_shape(client):
     client.post(
         "/usage/log",
