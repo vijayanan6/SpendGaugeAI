@@ -121,15 +121,24 @@ def _harden_db_permissions() -> None:
 # Manual snapshot — Anthropic's API has no endpoint that returns live pricing, so
 # this must be re-verified by hand against console.anthropic.com/settings/billing
 # whenever Anthropic changes rates or a new model starts appearing in
-# pricing_warnings (see _estimate_cost()'s fallback below — it exists so an
+# pricing_warnings (see _lookup_pricing()'s fallback below — it exists so an
 # unpriced model gets flagged instead of silently mispriced, the exact bug class
 # documented in the source project's INSIGHTS.md).
 _PRICING = {
     "claude-haiku-4-5": {
         "input": 0.001, "cache_write": 0.00125, "cache_read": 0.0001, "output": 0.005
     },
+    "claude-sonnet-5": {
+        # Introductory pricing through 2026-08-31 ($2/$10 per MTok). Reverts to
+        # $3/$15 (same as claude-sonnet-4-6, below) after that date — update this
+        # entry then.
+        "input": 0.002, "cache_write": 0.0025, "cache_read": 0.0002, "output": 0.010
+    },
     "claude-sonnet-4-6": {
         "input": 0.003, "cache_write": 0.00375, "cache_read": 0.0003, "output": 0.015
+    },
+    "claude-opus-4-8": {
+        "input": 0.005, "cache_write": 0.00625, "cache_read": 0.0005, "output": 0.025
     },
 }
 
@@ -138,9 +147,27 @@ _PRICING = {
 _WEB_SEARCH_COST_PER_USE = 0.01
 
 
+def _lookup_pricing(model: str) -> dict | None:
+    """Look up `model` in _PRICING, falling back to the longest matching prefix.
+
+    The API's `response.model` field sometimes carries a dated suffix (e.g.
+    `claude-haiku-4-5-20251001`) that won't exact-match a bare alias key like
+    `claude-haiku-4-5` — without the prefix fallback, every such call silently
+    mispriced at claude-sonnet-4-6's rate (see git history for the incident).
+    Sorting by key length descending avoids a shorter, coincidentally-matching
+    prefix winning over a more specific one.
+    """
+    if model in _PRICING:
+        return _PRICING[model]
+    for key in sorted(_PRICING, key=len, reverse=True):
+        if model.startswith(key):
+            return _PRICING[key]
+    return None
+
+
 def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, web_search_requests: int = 0) -> float:
     """Estimate cost in USD based on token counts, model pricing, and server-tool fees."""
-    p = _PRICING.get(model)
+    p = _lookup_pricing(model)
     if p is None:
         print(f"[cost] WARNING: no _PRICING entry for model '{model}' — falling back to claude-sonnet-4-6 rates. Add a real entry in database.py._PRICING.")
         p = _PRICING["claude-sonnet-4-6"]
@@ -167,7 +194,7 @@ def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, 
             """,
             (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), datetime.now().isoformat()),
         )
-        if model not in _PRICING:
+        if _lookup_pricing(model) is None:
             conn.execute(
                 "INSERT OR IGNORE INTO pricing_warnings (model, first_seen_at) VALUES (?, ?)",
                 (model, datetime.now().isoformat()),
