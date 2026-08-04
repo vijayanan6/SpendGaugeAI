@@ -176,6 +176,138 @@ async def test_async_create_with_stream_true_reports_real_usage_not_zero(capture
     assert captured[0]["tools_used"] == ["search_docs"]
 
 
+# ── server_tool_use blocks (tools_used) + usage.iterations (Advisor cost) ──
+#
+# Regression: tools_used only ever collected `tool_use`-type content blocks.
+# Claude's server-side tools (advisor, web_fetch, code_execution, etc.)
+# arrive as `server_tool_use`-type blocks instead — only web_search's *count*
+# was ever visible (via the separate usage.server_tool_use.web_search_requests
+# field), every other server-side tool's *name* was silently dropped from
+# tools_used. Separately, when a response includes an Advisor consultation,
+# the real per-model cost breakdown lives in usage.iterations — a field
+# nothing here ever read, so the whole response was priced at one flat model.
+
+def _fake_advisor_message(**overrides):
+    defaults = dict(
+        model="claude-haiku-4-5",
+        content=[
+            SimpleNamespace(type="text", text="hello"),
+            SimpleNamespace(type="tool_use", name="search_docs"),
+            SimpleNamespace(type="server_tool_use", name="advisor"),
+        ],
+        usage=SimpleNamespace(
+            input_tokens=1200,
+            output_tokens=700,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            server_tool_use=SimpleNamespace(web_search_requests=0),
+            iterations=[
+                SimpleNamespace(type="message", model="claude-haiku-4-5", input_tokens=900, output_tokens=500,
+                                 cache_creation_input_tokens=0, cache_read_input_tokens=0),
+                SimpleNamespace(type="advisor_message", model="claude-opus-4-8", input_tokens=300, output_tokens=200,
+                                 cache_creation_input_tokens=0, cache_read_input_tokens=0),
+            ],
+        ),
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_sync_create_reports_advisor_in_tools_used(captured):
+    fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_advisor_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-haiku-4-5")
+    assert captured[0]["tools_used"] == ["search_docs", "advisor"]
+
+
+def test_sync_create_reports_iterations_breakdown(captured):
+    fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_advisor_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-haiku-4-5")
+    assert captured[0]["iterations"] == [
+        {"type": "message", "model": "claude-haiku-4-5", "input_tokens": 900,
+         "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 500},
+        {"type": "advisor_message", "model": "claude-opus-4-8", "input_tokens": 300,
+         "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 200},
+    ]
+
+
+def test_sync_create_iterations_none_when_absent(captured):
+    # Regression guard: a normal (non-Advisor) response's usage has no
+    # `iterations` attribute at all — must report None, not crash or default
+    # to an empty list that could be mistaken for "explicitly zero entries".
+    fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert captured[0]["iterations"] is None
+
+
+def _fake_advisor_raw_events():
+    return [
+        SimpleNamespace(
+            type="message_start",
+            message=SimpleNamespace(
+                model="claude-haiku-4-5",
+                usage=SimpleNamespace(input_tokens=1200, cache_creation_input_tokens=0, cache_read_input_tokens=0),
+            ),
+        ),
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="tool_use", name="search_docs")),
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="server_tool_use", name="advisor")),
+        SimpleNamespace(
+            type="message_delta",
+            usage=SimpleNamespace(
+                output_tokens=700,
+                server_tool_use=SimpleNamespace(web_search_requests=0),
+                iterations=[
+                    SimpleNamespace(type="message", model="claude-haiku-4-5", input_tokens=900, output_tokens=500,
+                                     cache_creation_input_tokens=0, cache_read_input_tokens=0),
+                    SimpleNamespace(type="advisor_message", model="claude-opus-4-8", input_tokens=300, output_tokens=200,
+                                     cache_creation_input_tokens=0, cache_read_input_tokens=0),
+                ],
+            ),
+        ),
+        SimpleNamespace(type="message_stop"),
+    ]
+
+
+def test_sync_raw_stream_reports_advisor_tools_used_and_iterations(captured):
+    events = _fake_advisor_raw_events()
+    fake_client = _FakeClient(create_fn=lambda *a, **k: iter(events))
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    stream = wrapped.messages.create(model="claude-haiku-4-5", stream=True)
+    list(stream)  # drain
+
+    assert captured[0]["tools_used"] == ["search_docs", "advisor"]
+    assert captured[0]["iterations"][0]["model"] == "claude-haiku-4-5"
+    assert captured[0]["iterations"][1]["model"] == "claude-opus-4-8"
+
+
+@pytest.mark.asyncio
+async def test_async_raw_stream_reports_advisor_tools_used_and_iterations(captured):
+    events = _fake_advisor_raw_events()
+
+    async def async_create(*a, **k):
+        async def gen():
+            for e in events:
+                yield e
+        return gen()
+
+    fake_client = _FakeClient(create_fn=async_create)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    stream = await wrapped.messages.create(model="claude-haiku-4-5", stream=True)
+    async for _ in stream:
+        pass  # drain
+
+    assert captured[0]["tools_used"] == ["search_docs", "advisor"]
+    assert captured[0]["iterations"][0]["model"] == "claude-haiku-4-5"
+    assert captured[0]["iterations"][1]["model"] == "claude-opus-4-8"
+
+
 # ── check_budget() / acheck_budget() ───────────────────────────────────────
 
 class _FakeBudgetResponse:

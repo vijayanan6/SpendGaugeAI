@@ -34,6 +34,31 @@ describe("SpendGaugeAIClient.log", () => {
     });
   });
 
+  it("maps iterations to the snake_case wire shape when supplied", async () => {
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+    await client.log({
+      model: "claude-haiku-4-5",
+      iterations: [
+        { type: "message", model: "claude-haiku-4-5", inputTokens: 900, outputTokens: 500 },
+        { type: "advisor_message", model: "claude-opus-4-8", inputTokens: 300, outputTokens: 200 },
+      ],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.iterations).toEqual([
+      { type: "message", model: "claude-haiku-4-5", input_tokens: 900, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 500 },
+      { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 200 },
+    ]);
+  });
+
+  it("omits the iterations key entirely (not null) when not supplied — regression guard", async () => {
+    const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });
+    await client.log({ model: "claude-sonnet-4-6" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("iterations");
+  });
+
   it("never throws even when the request fails", async () => {
     fetchMock.mockRejectedValue(new Error("network down"));
     const client = new SpendGaugeAIClient({ baseUrl: "http://localhost:8000", apiKey: "key123" });

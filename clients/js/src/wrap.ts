@@ -16,12 +16,29 @@
  *   the caller iterates it — it resolves once the stream completes (or
  *   rejects if it errors/aborts) regardless of consumption pattern, the
  *   closest JS equivalent to Python's `finally`-block reporting.
- * - tools_used comes from `tool_use`-type content blocks; web_search_requests
- *   from `usage.server_tool_use`, a separate field — not one place.
+ * - tools_used comes from `tool_use`- and `server_tool_use`-type content
+ *   blocks (advisor, web_fetch, code_execution, etc. all arrive as the
+ *   latter); web_search_requests from `usage.server_tool_use`, a separate
+ *   field — not one place.
+ * - `usage.iterations` (only present on beta responses that went through a
+ *   server-side agentic loop, e.g. the Advisor tool running a second,
+ *   separately-priced model mid-response) is forwarded to the server so cost
+ *   can be summed per-iteration-model instead of priced entirely at the one
+ *   top-level model — absent for the overwhelming majority of calls, in
+ *   which case behavior is unchanged from before this field existed.
  * - Every report is wrapped in try/catch — reporting usage must never be
  *   able to break the caller's real request.
  */
-import { BudgetExceededError, type SpendGaugeAIClient, type UsageLogParams } from "./client.js";
+import { BudgetExceededError, type SpendGaugeAIClient, type UsageLogParams, type IterationUsageParam } from "./client.js";
+
+interface IterationUsageLike {
+  type?: string;
+  model?: string | null;
+  input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  output_tokens?: number;
+}
 
 interface UsageLike {
   input_tokens?: number;
@@ -29,6 +46,7 @@ interface UsageLike {
   cache_read_input_tokens?: number;
   output_tokens?: number;
   server_tool_use?: { web_search_requests?: number } | null;
+  iterations?: IterationUsageLike[] | null;
 }
 
 interface ContentBlockLike {
@@ -51,7 +69,7 @@ interface RawStreamEventLike {
 
 function extractToolsUsed(message: MessageLike): string[] {
   return (message.content ?? [])
-    .filter((b): b is ContentBlockLike & { name: string } => b.type === "tool_use" && typeof b.name === "string")
+    .filter((b): b is ContentBlockLike & { name: string } => (b.type === "tool_use" || b.type === "server_tool_use") && typeof b.name === "string")
     .map((b) => b.name);
 }
 
@@ -59,11 +77,25 @@ function extractWebSearchRequests(message: MessageLike): number {
   return message.usage?.server_tool_use?.web_search_requests ?? 0;
 }
 
+function extractIterations(message: MessageLike): IterationUsageParam[] | undefined {
+  const iterations = message.usage?.iterations;
+  if (!iterations || iterations.length === 0) return undefined;
+  return iterations.map((it) => ({
+    type: it.type,
+    model: it.model ?? null,
+    inputTokens: it.input_tokens ?? 0,
+    cacheWriteTokens: it.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: it.cache_read_input_tokens ?? 0,
+    outputTokens: it.output_tokens ?? 0,
+  }));
+}
+
 function reportParams(message: MessageLike, fallbackModel: string): UsageLogParams {
   return {
     model: message.model ?? fallbackModel,
     toolsUsed: extractToolsUsed(message),
     webSearchRequests: extractWebSearchRequests(message),
+    iterations: extractIterations(message),
     inputTokens: message.usage?.input_tokens ?? 0,
     cacheWriteTokens: message.usage?.cache_creation_input_tokens ?? 0,
     cacheReadTokens: message.usage?.cache_read_input_tokens ?? 0,
@@ -104,6 +136,7 @@ function wrapRawStream(
       let outputTokens = 0;
       let webSearchRequests = 0;
       const toolsUsed: string[] = [];
+      let iterations: IterationUsageLike[] | null | undefined;
       let reported = false;
 
       const report = async () => {
@@ -117,6 +150,7 @@ function wrapRawStream(
             cache_read_input_tokens: cacheReadTokens,
             output_tokens: outputTokens,
             server_tool_use: { web_search_requests: webSearchRequests },
+            iterations,
           },
           content: toolsUsed.map((name) => ({ type: "tool_use", name })),
         };
@@ -129,11 +163,12 @@ function wrapRawStream(
           inputTokens = event.message.usage?.input_tokens ?? inputTokens;
           cacheWriteTokens = event.message.usage?.cache_creation_input_tokens ?? cacheWriteTokens;
           cacheReadTokens = event.message.usage?.cache_read_input_tokens ?? cacheReadTokens;
-        } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use" && event.content_block.name) {
+        } else if (event.type === "content_block_start" && (event.content_block?.type === "tool_use" || event.content_block?.type === "server_tool_use") && event.content_block.name) {
           toolsUsed.push(event.content_block.name);
         } else if (event.type === "message_delta" && event.usage) {
           outputTokens = event.usage.output_tokens ?? outputTokens;
           webSearchRequests = event.usage.server_tool_use?.web_search_requests ?? webSearchRequests;
+          iterations = event.usage.iterations ?? iterations;
         }
       };
 

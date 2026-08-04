@@ -146,6 +146,107 @@ describe("wrap()", () => {
     expect(body.tools_used).toEqual(["search_docs"]);
   });
 
+  // Regression: tools_used only ever collected `tool_use`-type content
+  // blocks. Server-side tools (advisor, web_fetch, code_execution, etc.)
+  // arrive as `server_tool_use`-type blocks instead — only web_search's
+  // *count* was ever visible (via the separate usage.server_tool_use field),
+  // every other server-side tool's *name* was silently dropped. Separately,
+  // usage.iterations (present when a response includes a server-side
+  // sub-inference like an Advisor consultation on a different, pricier
+  // model) was never read at all, so the whole response was priced at one
+  // flat model.
+  it("reports server_tool_use blocks (e.g. advisor) in tools_used and forwards usage.iterations", async () => {
+    const advisorMessage = fakeMessage({
+      content: [
+        { type: "text", text: "hello" },
+        { type: "tool_use", name: "search_docs", input: {} },
+        { type: "server_tool_use", name: "advisor", input: {} },
+      ],
+      usage: {
+        input_tokens: 1200,
+        output_tokens: 700,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        server_tool_use: { web_search_requests: 0 },
+        iterations: [
+          { type: "message", model: "claude-haiku-4-5", input_tokens: 900, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, output_tokens: 200, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        ],
+      },
+    });
+    const fakeClient: WrappableAnthropicClient = {
+      messages: { create: vi.fn().mockResolvedValue(advisorMessage), stream: vi.fn() },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    await wrapped.messages.create({ model: "claude-haiku-4-5" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.tools_used).toEqual(["search_docs", "advisor"]);
+    expect(body.iterations).toEqual([
+      { type: "message", model: "claude-haiku-4-5", input_tokens: 900, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 500 },
+      { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 200 },
+    ]);
+  });
+
+  it("omits iterations entirely (not null) when usage.iterations is absent — regression guard", async () => {
+    const fakeClient: WrappableAnthropicClient = {
+      messages: { create: vi.fn().mockResolvedValue(fakeMessage()), stream: vi.fn() },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("iterations");
+  });
+
+  it("reports advisor tools_used and iterations from the raw create({ stream: true }) path", async () => {
+    const rawEvents = [
+      {
+        type: "message_start",
+        message: {
+          model: "claude-haiku-4-5",
+          usage: { input_tokens: 1200, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+      },
+      { type: "content_block_start", content_block: { type: "tool_use", name: "search_docs" } },
+      { type: "content_block_start", content_block: { type: "server_tool_use", name: "advisor" } },
+      {
+        type: "message_delta",
+        usage: {
+          output_tokens: 700,
+          server_tool_use: { web_search_requests: 0 },
+          iterations: [
+            { type: "message", model: "claude-haiku-4-5", input_tokens: 900, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+            { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, output_tokens: 200, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          ],
+        },
+      },
+      { type: "message_stop" },
+    ];
+    const fakeRawStream = {
+      [Symbol.asyncIterator]: async function* () {
+        for (const event of rawEvents) yield event;
+      },
+    };
+    const fakeClient: WrappableAnthropicClient = {
+      messages: { create: vi.fn().mockResolvedValue(fakeRawStream), stream: vi.fn() },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    const stream = await wrapped.messages.create({ model: "claude-haiku-4-5", stream: true });
+    for await (const _event of stream) {
+      // drain
+    }
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.tools_used).toEqual(["search_docs", "advisor"]);
+    expect(body.iterations[0].model).toBe("claude-haiku-4-5");
+    expect(body.iterations[1].model).toBe("claude-opus-4-8");
+  });
+
   it("swallows a stream that errors before completion without reporting", async () => {
     const fakeStream = {
       finalMessage: vi.fn().mockRejectedValue(new Error("stream aborted")),

@@ -100,6 +100,104 @@ def test_pricing_fallback_for_unknown_model(client):
     assert res.json()["cost_usd"] == pytest.approx(0.003 + 0.015, rel=1e-6)
 
 
+def test_usage_log_advisor_tool_round_trips_through_tools_used(client):
+    # "advisor" (and any other server-side tool) is a first-class tools_used
+    # entry now — the server never inspected tool *type*, only accepted a
+    # plain list[str], but this locks the case in explicitly since it's the
+    # motivating case for the whole iterations fix below.
+    res = client.post(
+        "/usage/log",
+        json={"model": "claude-haiku-4-5", "tools_used": ["advisor"]},
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    data = client.get("/usage/data", auth=BASIC).json()
+    assert "advisor" in [t["tool_name"] for t in data["by_tool"]]
+
+
+def test_usage_log_iterations_sums_per_model_cost(client):
+    # The actual bug fix: an Advisor-touched call must be priced per-entry at
+    # EACH entry's own model, not the whole response at one flat rate.
+    res = client.post(
+        "/usage/log",
+        json={
+            "model": "claude-haiku-4-5", "input_tokens": 1200, "output_tokens": 700,
+            "iterations": [
+                {"type": "message", "model": "claude-haiku-4-5", "input_tokens": 900, "output_tokens": 500},
+                {"type": "advisor_message", "model": "claude-opus-4-8", "input_tokens": 300, "output_tokens": 200},
+            ],
+        },
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    haiku_cost = 900 / 1000 * 0.001 + 500 / 1000 * 0.005
+    opus_cost = 300 / 1000 * 0.005 + 200 / 1000 * 0.025
+    expected = haiku_cost + opus_cost
+    assert res.json()["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+    # Positively prove undercounting is fixed: the old flat single-model
+    # calculation (pricing the full 1200/700 tokens at claude-haiku-4-5's
+    # cheaper rate) would have produced a strictly smaller number.
+    old_flat_cost = 1200 / 1000 * 0.001 + 700 / 1000 * 0.005
+    assert expected > old_flat_cost
+
+
+def test_usage_log_iterations_compaction_entry_falls_back_to_top_level_model(client):
+    # A "compaction" iteration has no model of its own — must be priced at
+    # the request's top-level `model`, not left unpriced or crash.
+    res = client.post(
+        "/usage/log",
+        json={
+            "model": "claude-sonnet-4-6", "input_tokens": 500, "output_tokens": 100,
+            "iterations": [{"type": "compaction", "input_tokens": 500, "output_tokens": 100}],
+        },
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    expected = 500 / 1000 * 0.003 + 100 / 1000 * 0.015  # priced at claude-sonnet-4-6 (top-level model)
+    assert res.json()["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_usage_log_without_iterations_matches_pre_change_cost(client):
+    # Explicit backward-compatibility regression: both omitting `iterations`
+    # entirely and sending it as an explicit null must produce byte-identical
+    # cost to the exact same request before this field existed.
+    res_omitted = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "input_tokens": 1000, "output_tokens": 1000},
+        headers=BEARER,
+    )
+    res_explicit_null = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "input_tokens": 1000, "output_tokens": 1000, "iterations": None},
+        headers=BEARER,
+    )
+    for res in (res_omitted, res_explicit_null):
+        assert res.status_code == 200
+        assert res.json()["cost_usd"] == pytest.approx(0.003 + 0.015, rel=1e-6)
+
+
+def test_usage_log_iterations_unpriced_model_inserts_pricing_warning(client):
+    # Per-iteration pricing-warning fan-out: an unpriced iteration model gets
+    # its own pricing_warnings row, distinct from the (already-priced)
+    # top-level model — otherwise an Advisor consultation on a brand-new
+    # model would silently fall back to sonnet-4-6 rates with no alert.
+    res = client.post(
+        "/usage/log",
+        json={
+            "model": "claude-haiku-4-5", "input_tokens": 100, "output_tokens": 50,
+            "iterations": [{"type": "advisor_message", "model": "some-future-advisor-model", "input_tokens": 100, "output_tokens": 50}],
+        },
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    with database.get_connection() as conn:
+        rows = conn.execute("SELECT model FROM pricing_warnings").fetchall()
+    warned_models = {row["model"] for row in rows}
+    assert "some-future-advisor-model" in warned_models
+    assert "claude-haiku-4-5" not in warned_models  # the top-level model IS priced, no warning for it
+
+
 def test_usage_data_requires_basic_auth(client):
     res = client.get("/usage/data")
     assert res.status_code == 401

@@ -55,7 +55,7 @@ class SpendGaugeAIClient:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
     def _payload(self, *, model, input_tokens=0, cache_write_tokens=0, cache_read_tokens=0,
-                 output_tokens=0, web_search_requests=0, tools_used=None,
+                 output_tokens=0, web_search_requests=0, tools_used=None, iterations=None,
                  session_id=None, project=None) -> dict:
         ctx = _session_ctx.get()
         return {
@@ -68,6 +68,7 @@ class SpendGaugeAIClient:
             "output_tokens": output_tokens,
             "web_search_requests": web_search_requests,
             "tools_used": tools_used or [],
+            "iterations": iterations,
         }
 
     def log(self, **kwargs) -> None:
@@ -213,7 +214,8 @@ def _extract_usage(message) -> dict:
 
 
 def _extract_tools_used(message) -> list[str]:
-    return [b.name for b in getattr(message, "content", None) or [] if getattr(b, "type", None) == "tool_use"]
+    return [b.name for b in getattr(message, "content", None) or []
+            if getattr(b, "type", None) in ("tool_use", "server_tool_use")]
 
 
 def _extract_web_search_requests(message) -> int:
@@ -222,11 +224,44 @@ def _extract_web_search_requests(message) -> int:
     return getattr(server_tool_use, "web_search_requests", 0) or 0
 
 
+def _map_iterations(iterations) -> list[dict] | None:
+    """Maps a raw `usage.iterations` list (SDK objects, from either a
+    non-streaming response or a streaming `message_delta` event — both carry
+    the same per-entry shape) into plain JSON-serializable dicts. Field names
+    mirror _extract_usage()'s existing cache_creation_input_tokens ->
+    cache_write_tokens convention. `model` is None for iteration types with
+    no model of their own (e.g. "compaction") — the server falls back to the
+    request's top-level model for those. Shared by both the non-streaming and
+    raw-streaming extraction paths so neither ever sends raw SDK objects
+    (which httpx can't JSON-serialize) over the wire."""
+    if not iterations:
+        return None
+    return [{
+        "type": getattr(it, "type", None),
+        "model": getattr(it, "model", None),
+        "input_tokens": getattr(it, "input_tokens", 0) or 0,
+        "cache_write_tokens": getattr(it, "cache_creation_input_tokens", 0) or 0,
+        "cache_read_tokens": getattr(it, "cache_read_input_tokens", 0) or 0,
+        "output_tokens": getattr(it, "output_tokens", 0) or 0,
+    } for it in iterations]
+
+
+def _extract_iterations(message) -> list[dict] | None:
+    """Per-sub-inference usage breakdown (`usage.iterations`) — only present
+    on beta responses that went through a server-side agentic loop (e.g. the
+    Advisor tool, which runs a second, separately-priced model mid-response).
+    Absent/empty for the overwhelming majority of calls, in which case this
+    returns None and the server prices the call exactly as it does today."""
+    usage = getattr(message, "usage", None)
+    return _map_iterations(getattr(usage, "iterations", None))
+
+
 def _report_kwargs(message, model: str) -> dict:
     return {
         "model": getattr(message, "model", None) or model,
         "tools_used": _extract_tools_used(message),
         "web_search_requests": _extract_web_search_requests(message),
+        "iterations": _extract_iterations(message),
         **_extract_usage(message),
     }
 
@@ -253,6 +288,7 @@ class _SyncRawStreamWrapper:
         self._output_tokens = 0
         self._web_search_requests = 0
         self._tools_used: list[str] = []
+        self._iterations: list[dict] | None = None
 
     def _absorb(self, event) -> None:
         event_type = getattr(event, "type", None)
@@ -265,7 +301,7 @@ class _SyncRawStreamWrapper:
             self._cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
         elif event_type == "content_block_start":
             block = getattr(event, "content_block", None)
-            if getattr(block, "type", None) == "tool_use":
+            if getattr(block, "type", None) in ("tool_use", "server_tool_use"):
                 name = getattr(block, "name", None)
                 if name:
                     self._tools_used.append(name)
@@ -275,6 +311,7 @@ class _SyncRawStreamWrapper:
                 self._output_tokens = getattr(usage, "output_tokens", None) or self._output_tokens
                 server_tool_use = getattr(usage, "server_tool_use", None)
                 self._web_search_requests = getattr(server_tool_use, "web_search_requests", None) or self._web_search_requests
+                self._iterations = _map_iterations(getattr(usage, "iterations", None)) or self._iterations
 
     def _report(self) -> None:
         self._spendgauge.log(
@@ -285,6 +322,7 @@ class _SyncRawStreamWrapper:
             output_tokens=self._output_tokens,
             web_search_requests=self._web_search_requests,
             tools_used=self._tools_used,
+            iterations=self._iterations,
         )
 
     def __iter__(self):
@@ -315,6 +353,7 @@ class _AsyncRawStreamWrapper:
         self._output_tokens = 0
         self._web_search_requests = 0
         self._tools_used: list[str] = []
+        self._iterations: list[dict] | None = None
 
     def _absorb(self, event) -> None:
         event_type = getattr(event, "type", None)
@@ -327,7 +366,7 @@ class _AsyncRawStreamWrapper:
             self._cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
         elif event_type == "content_block_start":
             block = getattr(event, "content_block", None)
-            if getattr(block, "type", None) == "tool_use":
+            if getattr(block, "type", None) in ("tool_use", "server_tool_use"):
                 name = getattr(block, "name", None)
                 if name:
                     self._tools_used.append(name)
@@ -337,6 +376,7 @@ class _AsyncRawStreamWrapper:
                 self._output_tokens = getattr(usage, "output_tokens", None) or self._output_tokens
                 server_tool_use = getattr(usage, "server_tool_use", None)
                 self._web_search_requests = getattr(server_tool_use, "web_search_requests", None) or self._web_search_requests
+                self._iterations = _map_iterations(getattr(usage, "iterations", None)) or self._iterations
 
     async def _report(self) -> None:
         await self._spendgauge.alog(
@@ -347,6 +387,7 @@ class _AsyncRawStreamWrapper:
             output_tokens=self._output_tokens,
             web_search_requests=self._web_search_requests,
             tools_used=self._tools_used,
+            iterations=self._iterations,
         )
 
     async def __aiter__(self):

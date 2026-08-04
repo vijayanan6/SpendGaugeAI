@@ -224,7 +224,8 @@ invent one just to send its first request:
   "cache_read_tokens": 300,
   "output_tokens": 450,
   "web_search_requests": 0,
-  "tools_used": ["search_docs"]
+  "tools_used": ["search_docs"],
+  "iterations": null
 }
 ```
 
@@ -234,8 +235,40 @@ can send `{"model": ..., "input_tokens": ..., "output_tokens": ...}` and nothing
 a real gap found in review — as written, `session_id` was `NOT NULL` with no default, meaning
 even the minimal integration case was blocked on inventing a session ID first.
 
+**`iterations`** (added after launch, optional, `null`/absent for the overwhelming majority of
+calls) — a per-sub-inference breakdown, present when a response went through a server-side
+agentic loop that used more than one model. The motivating case: Claude's Advisor tool runs a
+second, separately-priced model mid-response (e.g. the executor is `claude-haiku-4-5` but the
+advisor consultation ran on `claude-opus-4-8`); the real Anthropic API exposes this via
+`message.usage.iterations`, and pricing the *whole* response at the one top-level `model` silently
+undercounts every such call. Shape — one entry per sub-inference:
+
+```json
+{
+  "iterations": [
+    {"type": "message", "model": "claude-haiku-4-5", "input_tokens": 900, "output_tokens": 300, "cache_write_tokens": 0, "cache_read_tokens": 0},
+    {"type": "advisor_message", "model": "claude-opus-4-8", "input_tokens": 300, "output_tokens": 200, "cache_write_tokens": 0, "cache_read_tokens": 0}
+  ]
+}
+```
+
+`model` is `null` for an entry with no model of its own (the `"compaction"` iteration type) — the
+server falls back to the request's top-level `model` for that entry. `type` is informational only,
+never read for cost calculation.
+
 Server computes `estimated_cost_usd` from `_PRICING` + the request's raw token counts (see §6),
 stores the row, and runs the alert checks (§7). Response: `{"logged": true, "cost_usd": 0.0091}`.
+
+**Cost-calculation branch**: when `iterations` is present and non-empty, cost is the **sum** of
+each entry's own per-model cost (§6's `_estimate_cost()`, called once per entry) instead of the
+flat single-model calculation. When `iterations` is absent/empty — every call before this field
+existed, and every call that doesn't involve a multi-model sub-inference — cost is computed exactly
+as before, unchanged. The raw `iterations` payload is also persisted (nullable JSON column on
+`usage_logs`, same encoding as `tools_used`) rather than discarded after the cost sum, so a future
+investigation (or a per-iteration-model dashboard view) can still see *why* a given row's cost is
+what it is. Note this is distinct from `GET /usage/data`'s existing `by_model` breakdown below,
+which groups by the one flat top-level `model` column only — it does not yet break out
+iteration-level models; that remains a documented future enhancement, not part of this change.
 
 **Ingestion guardrails** (missing from the first pass — staying proportionate to the product:
 no external rate-limiter service, no new dependency, just bounded input):
@@ -556,18 +589,46 @@ wiring a real app to a real production server, not assumed from a first design p
    ```
    No context set → each call falls back to a fresh server-generated UUID (§4's default),
    correctly modeling "no session concept" rather than silently colliding requests together.
-4. **`tools_used` and `web_search_requests` come from two different places, not one.** Client-side
-   tool calls are `tool_use`-type content blocks; server-side tool usage (web_search) is a
-   *separate* structured field on `.usage`, not a content block at all — checking only
-   `block.type == "tool_use"` silently misses it, a real, already-documented gotcha from the
-   source project (`server_tool_use` blocks are a different content-block type). `wrap()`
-   replicates the correct extraction rather than rediscovering that bug from scratch:
+4. **`tools_used` must collect two different content-block types, and `web_search_requests` comes
+   from a third place entirely.** Client-side tools are `tool_use`-type content blocks;
+   *server-side* tools (advisor, web_search, web_fetch, code_execution, bash_code_execution,
+   text_editor_code_execution, tool_search_tool_regex, tool_search_tool_bm25) arrive as
+   `server_tool_use`-type blocks instead — a real bug found post-launch (both SDKs originally
+   only checked `block.type == "tool_use"`, so every server-side tool except web_search was
+   invisible in `tools_used`; only web_search's *count*, tracked separately below, was ever
+   captured). `web_search_requests` itself is a separate structured field on `.usage`, not a
+   content block at all:
    ```python
-   tools_used = [b.name for b in response.content if b.type == "tool_use"]
+   tools_used = [b.name for b in response.content if b.type in ("tool_use", "server_tool_use")]
    web_search_requests = getattr(getattr(response.usage, "server_tool_use", None), "web_search_requests", 0) or 0
    ```
    Same logic runs against the final message whether it came from a plain call or an exhausted
    stream — only how the final message is obtained differs between the two paths.
+4a. **`iterations` — per-sub-inference model breakdown, for accurate multi-model cost.** Also
+   found post-launch: when a response involves a server-side sub-inference that runs a *different*
+   model than the main response (the Advisor tool is the motivating case — it consults a second,
+   separately-priced model mid-response), the real breakdown lives in `message.usage.iterations`,
+   a list where entries of type `"message"`/`"advisor_message"`/`"fallback_message"` each carry
+   their own `model` field (`"compaction"` entries carry none). Neither SDK read this field
+   originally, so the *entire* response — including any pricier sub-inference tokens — was priced
+   at the one top-level model, silently undercounting cost. Extraction (mirrors `_extract_usage()`'s
+   existing `cache_creation_input_tokens` → `cache_write_tokens` field-naming convention):
+   ```python
+   def _extract_iterations(message):
+       iterations = getattr(getattr(message, "usage", None), "iterations", None)
+       if not iterations:
+           return None
+       return [{
+           "type": getattr(it, "type", None), "model": getattr(it, "model", None),
+           "input_tokens": getattr(it, "input_tokens", 0) or 0,
+           "cache_write_tokens": getattr(it, "cache_creation_input_tokens", 0) or 0,
+           "cache_read_tokens": getattr(it, "cache_read_input_tokens", 0) or 0,
+           "output_tokens": getattr(it, "output_tokens", 0) or 0,
+       } for it in iterations]
+   ```
+   Absent/`None` for the overwhelming majority of calls (no server-side sub-inference involved),
+   in which case the server prices the call exactly as it always has — see §4's cost-calculation
+   branch for the server-side half of this fix.
 5. **`tool_runner`'s non-streaming variant calls a *third* method, `.parse()` — not `.create()`
    at all.** Fixing edge 1 (patching `.beta.messages`) still wasn't enough: `BetaAsyncToolRunner`
    /`BetaToolRunner` (what a bare `tool_runner(...)` call returns when `stream` isn't passed —

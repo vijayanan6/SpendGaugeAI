@@ -61,6 +61,18 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_logs_model ON usage_logs(model)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_logs_session_id ON usage_logs(session_id)")
 
+        # Additive nullable column for tables created before this field
+        # existed — CREATE TABLE IF NOT EXISTS above is a no-op against an
+        # already-existing usage_logs table, so existing installs need this
+        # explicit migration. NULL (not '[]', unlike tools_used) deliberately
+        # distinguishes "no breakdown offered" (old client, or a call with no
+        # Advisor/fallback/compaction sub-inference) from "explicitly empty".
+        try:
+            conn.execute("ALTER TABLE usage_logs ADD COLUMN iterations TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pricing_warnings (
                 model         TEXT PRIMARY KEY,
@@ -180,24 +192,68 @@ def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: 
     )
 
 
+def _estimate_cost_from_iterations(fallback_model: str, iterations: list[dict], web_search_requests: int = 0) -> float:
+    """Sum _estimate_cost() once per sub-inference entry, each priced at ITS
+    OWN model (falling back to fallback_model — the request's top-level
+    model — for entries with no model of their own, e.g. "compaction"). This
+    is what actually fixes the Advisor-tool undercounting bug: pricing the
+    whole response at one flat (usually cheaper, executor) model rate loses
+    the fact that a sub-inference like an Advisor consultation may have run
+    on a different, pricier model. web_search_requests is billed once here,
+    not per-iteration — it's a flat per-use fee unrelated to which model
+    iteration served the text."""
+    token_cost = sum(
+        _estimate_cost(
+            it.get("model") or fallback_model,
+            it.get("input_tokens", 0), it.get("cache_write_tokens", 0),
+            it.get("cache_read_tokens", 0), it.get("output_tokens", 0),
+            web_search_requests=0,
+        )
+        for it in iterations
+    )
+    return token_cost + web_search_requests * _WEB_SEARCH_COST_PER_USE
+
+
 # ── Usage Logs ────────────────────────────────────────────────────────────────
 
-def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "default", web_search_requests: int = 0) -> float:
-    """Save token usage for one request. Returns the estimated cost in USD."""
-    cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests)
+def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "default", web_search_requests: int = 0, iterations: list[dict] | None = None) -> float:
+    """Save token usage for one request. Returns the estimated cost in USD.
+
+    When `iterations` is supplied and non-empty (a response that included at
+    least one server-side sub-inference, e.g. an Advisor consultation), cost
+    is the sum of each entry's own per-model cost instead of the flat
+    single-model calculation — see _estimate_cost_from_iterations(). This is
+    the one branch point in this function; every caller that never sends
+    `iterations` (i.e. every caller before this field existed) falls straight
+    into the `else` branch, byte-identical to this function's behavior before
+    this change."""
+    if iterations:
+        cost = _estimate_cost_from_iterations(model, iterations, web_search_requests)
+    else:
+        cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests)
     with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO usage_logs
-              (project, session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, web_search_requests, estimated_cost_usd, tools_used, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (project, session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, web_search_requests, estimated_cost_usd, tools_used, iterations, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), datetime.now().isoformat()),
+            (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), json.dumps(iterations) if iterations else None, datetime.now().isoformat()),
         )
-        if _lookup_pricing(model) is None:
+        # Pricing-warning fan-out: every distinct unpriced model gets its own
+        # warning row, not just the top-level `model` — an Advisor iteration
+        # running on a model not yet in _PRICING would otherwise silently
+        # fall back to sonnet-4-6 rates with no alert, the exact blind spot
+        # this whole fix exists to close.
+        unpriced_models = {model} if _lookup_pricing(model) is None else set()
+        for it in (iterations or []):
+            it_model = it.get("model") or model
+            if _lookup_pricing(it_model) is None:
+                unpriced_models.add(it_model)
+        for unpriced in unpriced_models:
             conn.execute(
                 "INSERT OR IGNORE INTO pricing_warnings (model, first_seen_at) VALUES (?, ?)",
-                (model, datetime.now().isoformat()),
+                (unpriced, datetime.now().isoformat()),
             )
         conn.commit()
     return cost

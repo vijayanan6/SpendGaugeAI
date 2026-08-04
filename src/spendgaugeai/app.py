@@ -108,6 +108,22 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # ── Request/response models ────────────────────────────────────────────────
 
+class IterationUsage(BaseModel):
+    """One sub-inference entry from the real Anthropic response's
+    `usage.iterations` — present when a call went through a server-side
+    agentic loop (e.g. the Advisor tool, which runs a second, separately-
+    priced model mid-response). `model` is None for iteration types with no
+    model of their own (e.g. "compaction") — usage_log() falls back to the
+    request's top-level `model` for those. `type` is informational only
+    (never read for cost calculation), kept for future observability."""
+    type: str | None = Field(default=None, max_length=50)
+    model: str | None = Field(default=None, max_length=200)
+    input_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+
+
 class UsageLogRequest(BaseModel):
     project: str = Field(default="default", max_length=200)
     session_id: str | None = Field(default=None, max_length=200)
@@ -118,6 +134,11 @@ class UsageLogRequest(BaseModel):
     output_tokens: int = Field(default=0, ge=0)
     web_search_requests: int = Field(default=0, ge=0)
     tools_used: list[str] = Field(default_factory=list, max_length=50)
+    # Optional, additive — absent/empty for the overwhelming majority of
+    # calls (no Advisor/fallback/compaction sub-inference), in which case
+    # usage_log() prices the call exactly as it always has. Same 50-entry
+    # cap rationale as tools_used (docs/DESIGN.md §4 ingestion guardrails).
+    iterations: list[IterationUsage] | None = Field(default=None, max_length=50)
 
     @field_validator("tools_used")
     @classmethod
@@ -156,6 +177,7 @@ async def post_usage_log(req: UsageLogRequest, background_tasks: BackgroundTasks
         tools=req.tools_used,
         project=req.project,
         web_search_requests=req.web_search_requests,
+        iterations=[i.model_dump() for i in req.iterations] if req.iterations else None,
     )
     # Backgrounded, not awaited inline: alerts.run_alert_checks() can chain a
     # real outbound Discord POST (10s timeout) plus several DB reads. Alerts

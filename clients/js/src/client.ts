@@ -11,6 +11,22 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
+/**
+ * One sub-inference entry from `usage.iterations` — present on beta
+ * responses that went through a server-side agentic loop (e.g. the Advisor
+ * tool, which runs a second, separately-priced model mid-response). `model`
+ * is undefined/null for iteration types with no model of their own (e.g.
+ * "compaction") — the server falls back to the top-level `model` for those.
+ */
+export interface IterationUsageParam {
+  type?: string;
+  model?: string | null;
+  inputTokens?: number;
+  cacheWriteTokens?: number;
+  cacheReadTokens?: number;
+  outputTokens?: number;
+}
+
 export interface UsageLogParams {
   model: string;
   inputTokens?: number;
@@ -19,6 +35,7 @@ export interface UsageLogParams {
   outputTokens?: number;
   webSearchRequests?: number;
   toolsUsed?: string[];
+  iterations?: IterationUsageParam[];
   sessionId?: string;
   project?: string;
 }
@@ -108,6 +125,14 @@ export class SpendGaugeAIClient {
       output_tokens: params.outputTokens ?? 0,
       web_search_requests: params.webSearchRequests ?? 0,
       tools_used: params.toolsUsed ?? [],
+      iterations: params.iterations?.map((it) => ({
+        type: it.type,
+        model: it.model ?? null,
+        input_tokens: it.inputTokens ?? 0,
+        cache_write_tokens: it.cacheWriteTokens ?? 0,
+        cache_read_tokens: it.cacheReadTokens ?? 0,
+        output_tokens: it.outputTokens ?? 0,
+      })),
     };
   }
 
