@@ -552,8 +552,9 @@ backwards for a product whose stated audience is "anyone building a Claude API a
   reporting from a context `wrap()` can't see into). Stays available in every SDK; not the
   default-recommended path, but not deprecated either.
 
-**`wrap()`'s six real edges — the first four found in design review, the last two only found by
-wiring a real app to a real production server, not assumed from a first design pass:**
+**`wrap()`'s seven real edges — the first four found in design review, edges 5–6 only found by
+wiring a real app to a real production server, edge 4a only found by real Advisor-tool traffic
+from the Pragya dogfooding integration — none assumed from a first design pass:**
 
 1. **Patch at the shared choke point — which turned out to be *two* objects, not one.** `wrap()`
    patches `messages.create` and `messages.stream` directly on the client object — on *both*

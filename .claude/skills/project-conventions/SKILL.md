@@ -1,6 +1,6 @@
 ---
 name: project-conventions
-description: Pre-commit self-check for SpendGaugeAI's hard, easy-to-regress rules — no Node outside clients/js, committed build artifacts must stay in sync, auth precedence must stay exclusive, wrap()'s six resolved edge cases. Use before finishing a change that touches static/src/input.css, auth.py, client.py, clients/js/, or that adds a new dependency/framework.
+description: Pre-commit self-check for SpendGaugeAI's hard, easy-to-regress rules — no Node outside clients/js, committed build artifacts must stay in sync, auth precedence must stay exclusive, wrap()'s seven resolved edge cases. Use before finishing a change that touches static/src/input.css, auth.py, client.py, clients/js/, or that adds a new dependency/framework.
 user-invocable: false
 ---
 
@@ -28,12 +28,14 @@ through whichever items are relevant to what just changed; skip the rest.
       unchanged?
 - [ ] `session_id` propagates via `contextvars.ContextVar` (Python) / equivalent isolation (JS),
       never a mutable attribute on a shared client?
-- [ ] `tools_used` from `tool_use` content blocks, `web_search_requests` from
-      `response.usage.server_tool_use` — not conflated?
+- [ ] `tools_used` from **both** `tool_use`- and `server_tool_use`-type content blocks,
+      `web_search_requests` from `response.usage.server_tool_use` — not conflated?
 - [ ] `.parse()` patched alongside `.create()`/`.stream()` (needed for `tool_runner`'s
       non-streaming path)?
 - [ ] Sync/async dispatch checked via `inspect.iscoroutinefunction(inspect.unwrap(original))`, not
       a direct check that the real SDK's dispatcher wrapper defeats?
+- [ ] `response.usage.iterations` (multi-model sub-inference breakdown, e.g. Advisor) extracted
+      and forwarded alongside `tools_used`/`web_search_requests`?
 
 ## If you're adding a new dependency, framework, or build step anywhere in the repo
 - [ ] Node/npm stays confined to `clients/js/` — nothing added to the server side introduces a

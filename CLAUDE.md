@@ -172,18 +172,21 @@ pytest tests/                                     # backend
 - **`session_id` is optional on `POST /usage/log`**, server-generates a UUID if omitted. Found
   in review: the original schema had it `NOT NULL` with no default, which blocked even the
   simplest integration (a script with no session concept) from sending its first request.
-- **`wrap()` has six specific, resolved edges — implement all six, don't ship a naive version.**
-  The first four came from design review; the last two were only found by wiring a real app to a
-  real `tool_runner`-based agentic loop and a real production server — every prior test used fake
-  Python clients built from plain `async def` functions, which happened to mask both. (1) patch
-  `messages.create` **and** `messages.stream`, on **both** `Anthropic` and `AsyncAnthropic` —
-  patching only the sync client silently covers nothing for an async-only app; (2) streaming
+- **`wrap()` has seven specific, resolved edges — implement all seven, don't ship a naive
+  version.** The first four came from design review; edges 5–6 were only found by wiring a real
+  app to a real `tool_runner`-based agentic loop and a real production server — every prior test
+  used fake Python clients built from plain `async def` functions, which happened to mask both;
+  edge 7 was only found by real Advisor-tool traffic from the Pragya dogfooding integration. (1)
+  patch `messages.create` **and** `messages.stream`, on **both** `Anthropic` and `AsyncAnthropic`
+  — patching only the sync client silently covers nothing for an async-only app; (2) streaming
   reports from the final accumulated message inside a `finally`, forwarding every event unchanged
   to the caller — without this, streaming calls (the majority pattern) go silently unreported;
   (3) `session_id` propagates via a `contextvars.ContextVar` (`client.spendgauge_session(...)`),
   never a mutable attribute on the client object — a shared long-lived client under concurrent
-  requests would otherwise clobber sessions together; (4) `tools_used` comes from `tool_use`-type
-  content blocks, `web_search_requests` comes from `response.usage.server_tool_use` — two
+  requests would otherwise clobber sessions together; (4) `tools_used` comes from **both**
+  `tool_use`- and `server_tool_use`-type content blocks (the latter covers server-side tools like
+  Advisor/`web_fetch`/`code_execution` that never surface as plain `tool_use`, and was originally
+  missed — see edge 7), `web_search_requests` comes from `response.usage.server_tool_use` — two
   different places, not one; (5) **patching `client.messages` alone does NOT cover
   `tool_runner`** — `client.beta.messages` is a genuinely separate resource object in the real SDK
   (`client.messages is client.beta.messages` → `False`, confirmed live), and `tool_runner` lives
@@ -195,8 +198,15 @@ pytest tests/                                     # backend
   can `await` it fine; use `inspect.iscoroutinefunction(inspect.unwrap(original_create))` instead,
   or the sync branch runs against a real async client and reports on an **unawaited coroutine**
   (all-zero tokens/cost, real API call still works — which is exactly why this was invisible until
-  tested against a real client). See §8a of `docs/DESIGN.md` for the exact extraction code and
-  full story behind edges 5–6.
+  tested against a real client); (7) **a response can carry `response.usage.iterations`** — a
+  per-sub-inference breakdown present when a server-side agentic loop invoked a second,
+  differently-priced model mid-response (the Advisor tool's motivating case: executor on one
+  model, advisor consultation on another). Pricing the whole response at the flat top-level
+  `model` silently undercounts these calls; `wrap()` must extract `iterations` alongside
+  `tools_used`/`web_search_requests` and forward it on `/usage/log` so the server can sum
+  per-iteration cost instead (§4 of `docs/DESIGN.md`) — absent/empty for the overwhelming
+  majority of calls, so this is additive, not a behavior change for normal traffic. See §8a of
+  `docs/DESIGN.md` for the exact extraction code and full story behind edges 5–7.
 
 ## Relationship to the MCP Learning Project
 

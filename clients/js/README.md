@@ -148,8 +148,9 @@ await spendgauge.spendgaugeSession({ sessionId: "abc123", project: "my-app" }, a
 
 ## Design
 
-Full integration design (including all six resolved `wrap()` edge cases — the last two, covering
-`client.beta.messages`/`toolRunner`, only found by wiring a real app to a real production server):
+Full integration design (including all seven resolved `wrap()` edge cases — two, covering
+`client.beta.messages`/`toolRunner`, only found by wiring a real app to a real production server;
+one, multi-model `iterations` cost accounting, only found by real Advisor-tool traffic):
 see [`docs/DESIGN.md` §8a](../../docs/DESIGN.md) in the main repo.
 
 ## License
