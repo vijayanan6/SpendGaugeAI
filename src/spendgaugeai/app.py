@@ -120,6 +120,7 @@ class IterationUsage(BaseModel):
     model: str | None = Field(default=None, max_length=200)
     input_tokens: int = Field(default=0, ge=0)
     cache_write_tokens: int = Field(default=0, ge=0)
+    cache_write_1h_tokens: int = Field(default=0, ge=0)
     cache_read_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
 
@@ -130,6 +131,13 @@ class UsageLogRequest(BaseModel):
     model: str = Field(max_length=200)
     input_tokens: int = Field(default=0, ge=0)
     cache_write_tokens: int = Field(default=0, ge=0)
+    # Subset of cache_write_tokens actually billed at the 1-hour cache TTL
+    # rate (2x input) rather than the default 5-minute rate (1.25x input,
+    # what cache_write_tokens alone is priced at) — see docs/DESIGN.md
+    # §4a-cache. Optional/0 for the overwhelming majority of calls (no
+    # explicit ttl: "1h" cache_control breakpoint), in which case pricing is
+    # unchanged from before this field existed.
+    cache_write_1h_tokens: int = Field(default=0, ge=0)
     cache_read_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     web_search_requests: int = Field(default=0, ge=0)
@@ -172,6 +180,7 @@ async def post_usage_log(req: UsageLogRequest, background_tasks: BackgroundTasks
         model=req.model,
         input_tokens=req.input_tokens,
         cache_write=req.cache_write_tokens,
+        cache_write_1h=req.cache_write_1h_tokens,
         cache_read=req.cache_read_tokens,
         output_tokens=req.output_tokens,
         tools=req.tools_used,

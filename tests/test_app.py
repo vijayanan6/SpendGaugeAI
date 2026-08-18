@@ -68,6 +68,83 @@ def test_usage_log_success_computes_cost(client):
     assert body["cost_usd"] == pytest.approx(0.003 + 0.015, rel=1e-6)
 
 
+def test_usage_log_cache_write_1h_tokens_priced_at_double_input_rate(client):
+    # The actual bug fix: an explicit ttl: "1h" cache_control breakpoint
+    # bills at 2x input, not the 1.25x (5-minute) rate cache_write_tokens
+    # alone gets priced at — see docs/DESIGN.md §4a-cache.
+    res = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "cache_write_tokens": 1000, "cache_write_1h_tokens": 1000},
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    expected = 1000 / 1000 * (2 * 0.003)  # all 1000 cache-write tokens at the 1h (2x input) rate
+    assert res.json()["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+    # Positively prove undercounting is fixed: the old flat 5-minute-rate
+    # calculation would have produced a strictly smaller number.
+    old_flat_cost = 1000 / 1000 * 0.00375
+    assert expected > old_flat_cost
+
+
+def test_usage_log_cache_write_split_between_5m_and_1h_tiers(client):
+    res = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "cache_write_tokens": 1000, "cache_write_1h_tokens": 400},
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    expected = 600 / 1000 * 0.00375 + 400 / 1000 * (2 * 0.003)
+    assert res.json()["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_usage_log_without_cache_write_1h_matches_pre_change_cost(client):
+    # Backward-compatibility regression: omitting cache_write_1h_tokens and
+    # sending it as an explicit 0 must both match the pre-this-field cost.
+    res_omitted = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "cache_write_tokens": 1000},
+        headers=BEARER,
+    )
+    res_explicit_zero = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "cache_write_tokens": 1000, "cache_write_1h_tokens": 0},
+        headers=BEARER,
+    )
+    for res in (res_omitted, res_explicit_zero):
+        assert res.status_code == 200
+        assert res.json()["cost_usd"] == pytest.approx(1000 / 1000 * 0.00375, rel=1e-6)
+
+
+def test_usage_log_cache_write_1h_clamped_to_cache_write_total(client):
+    # Malformed/adversarial input: cache_write_1h_tokens > cache_write_tokens
+    # must not produce a negative 5-minute remainder or an inflated cost.
+    res = client.post(
+        "/usage/log",
+        json={"model": "claude-sonnet-4-6", "cache_write_tokens": 500, "cache_write_1h_tokens": 999999},
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    expected = 500 / 1000 * (2 * 0.003)  # clamped to the full 500 at the 1h rate, nothing left at 5m
+    assert res.json()["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_usage_log_iterations_cache_write_1h_tokens_priced_per_entry(client):
+    res = client.post(
+        "/usage/log",
+        json={
+            "model": "claude-haiku-4-5",
+            "iterations": [
+                {"type": "message", "model": "claude-haiku-4-5", "cache_write_tokens": 1000, "cache_write_1h_tokens": 1000},
+            ],
+        },
+        headers=BEARER,
+    )
+    assert res.status_code == 200
+    expected = 1000 / 1000 * (2 * 0.001)  # haiku input rate 0.001 -> 1h cache-write rate 0.002
+    assert res.json()["cost_usd"] == pytest.approx(expected, rel=1e-6)
+
+
 def test_usage_log_defaults_project_and_session(client):
     res = client.post("/usage/log", json={"model": "claude-sonnet-4-6"}, headers=BEARER)
     assert res.status_code == 200

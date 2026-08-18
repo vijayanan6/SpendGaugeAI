@@ -56,6 +56,53 @@ describe("wrap()", () => {
     expect(body.cache_read_tokens).toBe(20);
   });
 
+  it("reports 1-hour cache-write tokens from a non-streaming create() call", async () => {
+    // The actual bug fix: usage.cache_creation.ephemeral_1h_input_tokens
+    // (only present when the caller used an explicit ttl: "1h" cache_control
+    // breakpoint) must be extracted and forwarded so the server can price it
+    // at the 1-hour rate instead of flat-rating every cache write at the
+    // cheaper 5-minute rate — see docs/DESIGN.md §4a-cache.
+    const fakeClient: WrappableAnthropicClient = {
+      messages: {
+        create: vi.fn().mockResolvedValue(
+          fakeMessage({
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+              cache_creation_input_tokens: 250,
+              cache_creation: { ephemeral_5m_input_tokens: 50, ephemeral_1h_input_tokens: 200 },
+              cache_read_input_tokens: 20,
+              server_tool_use: { web_search_requests: 2 },
+            },
+          }),
+        ),
+        stream: vi.fn(),
+      },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.cache_write_tokens).toBe(250);
+    expect(body.cache_write_1h_tokens).toBe(200);
+  });
+
+  it("defaults 1-hour cache-write tokens to 0 when cache_creation is absent", async () => {
+    // Backward-compat: the overwhelming majority of calls use no 1h TTL
+    // breakpoint and carry no cache_creation field at all.
+    const fakeClient: WrappableAnthropicClient = {
+      messages: {
+        create: vi.fn().mockResolvedValue(fakeMessage()),
+        stream: vi.fn(),
+      },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    await wrapped.messages.create({ model: "claude-sonnet-4-6" });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.cache_write_1h_tokens).toBe(0);
+  });
+
   it("does not throw even if the underlying create() call fails", async () => {
     const fakeClient: WrappableAnthropicClient = {
       messages: {
@@ -146,6 +193,50 @@ describe("wrap()", () => {
     expect(body.tools_used).toEqual(["search_docs"]);
   });
 
+  it("reports 1-hour cache-write tokens from create({ stream: true })", async () => {
+    // Same fix as the non-streaming case, but for the raw stream(=true) path,
+    // which extracts usage fields from message_start rather than a Message
+    // object — a genuinely separate code path that needed its own fix.
+    const rawEvents = [
+      {
+        type: "message_start",
+        message: {
+          model: "claude-sonnet-4-6",
+          usage: {
+            input_tokens: 100,
+            cache_creation_input_tokens: 250,
+            cache_creation: { ephemeral_5m_input_tokens: 50, ephemeral_1h_input_tokens: 200 },
+            cache_read_input_tokens: 20,
+          },
+        },
+      },
+      { type: "message_delta", usage: { output_tokens: 50, server_tool_use: { web_search_requests: 0 } } },
+      { type: "message_stop" },
+    ];
+    const fakeRawStream = {
+      [Symbol.asyncIterator]: async function* () {
+        for (const event of rawEvents) yield event;
+      },
+    };
+    const fakeClient: WrappableAnthropicClient = {
+      messages: {
+        create: vi.fn().mockResolvedValue(fakeRawStream),
+        stream: vi.fn(),
+      },
+    };
+    const wrapped = wrap(fakeClient, spendgauge);
+
+    const stream = await wrapped.messages.create({ model: "claude-sonnet-4-6", stream: true });
+    for await (const _event of stream) {
+      // drain the stream so the finally-equivalent report fires
+    }
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.cache_write_tokens).toBe(250);
+    expect(body.cache_write_1h_tokens).toBe(200);
+  });
+
   // Regression: tools_used only ever collected `tool_use`-type content
   // blocks. Server-side tools (advisor, web_fetch, code_execution, etc.)
   // arrive as `server_tool_use`-type blocks instead — only web_search's
@@ -184,8 +275,8 @@ describe("wrap()", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.tools_used).toEqual(["search_docs", "advisor"]);
     expect(body.iterations).toEqual([
-      { type: "message", model: "claude-haiku-4-5", input_tokens: 900, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 500 },
-      { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 200 },
+      { type: "message", model: "claude-haiku-4-5", input_tokens: 900, cache_write_tokens: 0, cache_write_1h_tokens: 0, cache_read_tokens: 0, output_tokens: 500 },
+      { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, cache_write_tokens: 0, cache_write_1h_tokens: 0, cache_read_tokens: 0, output_tokens: 200 },
     ]);
   });
 

@@ -155,10 +155,10 @@ after your first real call, especially if you're on `tool_runner`.
 
 ## Design
 
-Full integration design (including all seven resolved `wrap()` edge cases — two, covering
+Full integration design (including all eight resolved `wrap()` edge cases — two, covering
 `client.beta.messages`/`toolRunner`, only found by wiring a real app to a real production server;
-one, multi-model `iterations` cost accounting, only found by real Advisor-tool traffic):
-see [`docs/DESIGN.md` §8a](../../docs/DESIGN.md) in the main repo.
+two more, multi-model `iterations` cost accounting and 1-hour cache TTL pricing, only found by
+real dogfooding traffic): see [`docs/DESIGN.md` §8a](../../docs/DESIGN.md) in the main repo.
 
 ## License
 

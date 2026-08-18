@@ -54,9 +54,9 @@ class SpendGaugeAIClient:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def _payload(self, *, model, input_tokens=0, cache_write_tokens=0, cache_read_tokens=0,
-                 output_tokens=0, web_search_requests=0, tools_used=None, iterations=None,
-                 session_id=None, project=None) -> dict:
+    def _payload(self, *, model, input_tokens=0, cache_write_tokens=0, cache_write_1h_tokens=0,
+                 cache_read_tokens=0, output_tokens=0, web_search_requests=0, tools_used=None,
+                 iterations=None, session_id=None, project=None) -> dict:
         ctx = _session_ctx.get()
         return {
             "project": project or (ctx.get("project") if ctx else None) or self.project,
@@ -64,6 +64,7 @@ class SpendGaugeAIClient:
             "model": model,
             "input_tokens": input_tokens,
             "cache_write_tokens": cache_write_tokens,
+            "cache_write_1h_tokens": cache_write_1h_tokens,
             "cache_read_tokens": cache_read_tokens,
             "output_tokens": output_tokens,
             "web_search_requests": web_search_requests,
@@ -203,11 +204,25 @@ class _SessionContext:
 
 # ── wrap() ──────────────────────────────────────────────────────────────────
 
+def _extract_cache_write_1h(usage) -> int:
+    """Subset of cache_creation_input_tokens actually billed at the 1-hour
+    cache TTL rate (2x input, vs 1.25x for the default 5-minute rate) —
+    `usage.cache_creation.ephemeral_1h_input_tokens`. Present only when the
+    caller used an explicit `cache_control: {..., "ttl": "1h"}` breakpoint;
+    absent (0) otherwise, matching cache_creation_input_tokens' own
+    5m+1h sum. See docs/DESIGN.md §4a-cache — found via a real dogfooding
+    integration (Pragya) whose system-prompt/tool-schema caching uses 1h TTL,
+    which this project's pricing silently flat-rated at the cheaper 5m tier."""
+    cache_creation = getattr(usage, "cache_creation", None)
+    return getattr(cache_creation, "ephemeral_1h_input_tokens", 0) or 0
+
+
 def _extract_usage(message) -> dict:
     usage = getattr(message, "usage", None)
     return {
         "input_tokens": getattr(usage, "input_tokens", 0) or 0,
         "cache_write_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        "cache_write_1h_tokens": _extract_cache_write_1h(usage),
         "cache_read_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
         "output_tokens": getattr(usage, "output_tokens", 0) or 0,
     }
@@ -241,6 +256,7 @@ def _map_iterations(iterations) -> list[dict] | None:
         "model": getattr(it, "model", None),
         "input_tokens": getattr(it, "input_tokens", 0) or 0,
         "cache_write_tokens": getattr(it, "cache_creation_input_tokens", 0) or 0,
+        "cache_write_1h_tokens": _extract_cache_write_1h(it),
         "cache_read_tokens": getattr(it, "cache_read_input_tokens", 0) or 0,
         "output_tokens": getattr(it, "output_tokens", 0) or 0,
     } for it in iterations]
@@ -284,6 +300,7 @@ class _SyncRawStreamWrapper:
         self._model = model
         self._input_tokens = 0
         self._cache_write_tokens = 0
+        self._cache_write_1h_tokens = 0
         self._cache_read_tokens = 0
         self._output_tokens = 0
         self._web_search_requests = 0
@@ -298,6 +315,7 @@ class _SyncRawStreamWrapper:
             usage = getattr(message, "usage", None)
             self._input_tokens = getattr(usage, "input_tokens", 0) or 0
             self._cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            self._cache_write_1h_tokens = _extract_cache_write_1h(usage)
             self._cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
         elif event_type == "content_block_start":
             block = getattr(event, "content_block", None)
@@ -318,6 +336,7 @@ class _SyncRawStreamWrapper:
             model=self._model,
             input_tokens=self._input_tokens,
             cache_write_tokens=self._cache_write_tokens,
+            cache_write_1h_tokens=self._cache_write_1h_tokens,
             cache_read_tokens=self._cache_read_tokens,
             output_tokens=self._output_tokens,
             web_search_requests=self._web_search_requests,
@@ -349,6 +368,7 @@ class _AsyncRawStreamWrapper:
         self._model = model
         self._input_tokens = 0
         self._cache_write_tokens = 0
+        self._cache_write_1h_tokens = 0
         self._cache_read_tokens = 0
         self._output_tokens = 0
         self._web_search_requests = 0
@@ -363,6 +383,7 @@ class _AsyncRawStreamWrapper:
             usage = getattr(message, "usage", None)
             self._input_tokens = getattr(usage, "input_tokens", 0) or 0
             self._cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            self._cache_write_1h_tokens = _extract_cache_write_1h(usage)
             self._cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
         elif event_type == "content_block_start":
             block = getattr(event, "content_block", None)
@@ -383,6 +404,7 @@ class _AsyncRawStreamWrapper:
             model=self._model,
             input_tokens=self._input_tokens,
             cache_write_tokens=self._cache_write_tokens,
+            cache_write_1h_tokens=self._cache_write_1h_tokens,
             cache_read_tokens=self._cache_read_tokens,
             output_tokens=self._output_tokens,
             web_search_requests=self._web_search_requests,

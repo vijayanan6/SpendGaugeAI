@@ -172,11 +172,12 @@ pytest tests/                                     # backend
 - **`session_id` is optional on `POST /usage/log`**, server-generates a UUID if omitted. Found
   in review: the original schema had it `NOT NULL` with no default, which blocked even the
   simplest integration (a script with no session concept) from sending its first request.
-- **`wrap()` has seven specific, resolved edges — implement all seven, don't ship a naive
+- **`wrap()` has eight specific, resolved edges — implement all eight, don't ship a naive
   version.** The first four came from design review; edges 5–6 were only found by wiring a real
   app to a real `tool_runner`-based agentic loop and a real production server — every prior test
   used fake Python clients built from plain `async def` functions, which happened to mask both;
-  edge 7 was only found by real Advisor-tool traffic from the Pragya dogfooding integration. (1)
+  edges 7–8 were only found by real Pragya dogfooding traffic (an Advisor-tool multi-model call
+  for edge 7, 1-hour cache TTL writes for edge 8). (1)
   patch `messages.create` **and** `messages.stream`, on **both** `Anthropic` and `AsyncAnthropic`
   — patching only the sync client silently covers nothing for an async-only app; (2) streaming
   reports from the final accumulated message inside a `finally`, forwarding every event unchanged
@@ -205,8 +206,20 @@ pytest tests/                                     # backend
   `model` silently undercounts these calls; `wrap()` must extract `iterations` alongside
   `tools_used`/`web_search_requests` and forward it on `/usage/log` so the server can sum
   per-iteration cost instead (§4 of `docs/DESIGN.md`) — absent/empty for the overwhelming
-  majority of calls, so this is additive, not a behavior change for normal traffic. See §8a of
-  `docs/DESIGN.md` for the exact extraction code and full story behind edges 5–7.
+  majority of calls, so this is additive, not a behavior change for normal traffic; (8) **1-hour
+  cache TTL writes cost 2x input, not 1.25x** — real Anthropic pricing has two cache-write tiers
+  (1.25x input for the default 5-minute breakpoint, 2x for an explicit
+  `cache_control: {..., "ttl": "1h"}` breakpoint), but this project's pricing only ever knew about
+  the 5-minute rate, silently undercounting every 1h-tier write. Found investigating a real ~$0.29
+  gap between this project's own tracked spend and the actual Anthropic console balance — Pragya
+  caches its system prompt and tool schema at 1h TTL, and that mispricing accounted for roughly
+  55% of the gap. The real API breaks the flat `cache_creation_input_tokens` down by tier on
+  `usage.cache_creation.ephemeral_1h_input_tokens`/`.ephemeral_5m_input_tokens`; `wrap()` extracts
+  the 1h figure and forwards it as `cache_write_1h_tokens` alongside the existing flat count, and
+  the server splits the two rates instead of flat-pricing every write at the 5-minute rate —
+  absent/`0` for the overwhelming majority of calls (no 1h TTL breakpoint used), so this is
+  additive too. See §8a of `docs/DESIGN.md` for the exact extraction code and full story behind
+  edges 5–8.
 
 ## Relationship to the MCP Learning Project
 

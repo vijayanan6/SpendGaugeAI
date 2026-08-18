@@ -1,6 +1,6 @@
 ---
 name: project-conventions
-description: Pre-commit self-check for SpendGaugeAI's hard, easy-to-regress rules — no Node outside clients/js, committed build artifacts must stay in sync, auth precedence must stay exclusive, wrap()'s seven resolved edge cases. Use before finishing a change that touches static/src/input.css, auth.py, client.py, clients/js/, or that adds a new dependency/framework.
+description: Pre-commit self-check for SpendGaugeAI's hard, easy-to-regress rules — no Node outside clients/js, committed build artifacts must stay in sync, auth precedence must stay exclusive, wrap()'s eight resolved edge cases. Use before finishing a change that touches static/src/input.css, auth.py, client.py, clients/js/, or that adds a new dependency/framework.
 user-invocable: false
 ---
 
@@ -36,6 +36,8 @@ through whichever items are relevant to what just changed; skip the rest.
       a direct check that the real SDK's dispatcher wrapper defeats?
 - [ ] `response.usage.iterations` (multi-model sub-inference breakdown, e.g. Advisor) extracted
       and forwarded alongside `tools_used`/`web_search_requests`?
+- [ ] `response.usage.cache_creation.ephemeral_1h_input_tokens` (1-hour cache TTL writes, billed
+      at 2x input not the default 1.25x) extracted and forwarded as `cache_write_1h_tokens`?
 
 ## If you're adding a new dependency, framework, or build step anywhere in the repo
 - [ ] Node/npm stays confined to `clients/js/` — nothing added to the server side introduces a

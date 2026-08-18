@@ -31,11 +31,17 @@
  */
 import { BudgetExceededError, type SpendGaugeAIClient, type UsageLogParams, type IterationUsageParam } from "./client.js";
 
+interface CacheCreationLike {
+  ephemeral_5m_input_tokens?: number;
+  ephemeral_1h_input_tokens?: number;
+}
+
 interface IterationUsageLike {
   type?: string;
   model?: string | null;
   input_tokens?: number;
   cache_creation_input_tokens?: number;
+  cache_creation?: CacheCreationLike | null;
   cache_read_input_tokens?: number;
   output_tokens?: number;
 }
@@ -43,6 +49,7 @@ interface IterationUsageLike {
 interface UsageLike {
   input_tokens?: number;
   cache_creation_input_tokens?: number;
+  cache_creation?: CacheCreationLike | null;
   cache_read_input_tokens?: number;
   output_tokens?: number;
   server_tool_use?: { web_search_requests?: number } | null;
@@ -85,6 +92,7 @@ function extractIterations(message: MessageLike): IterationUsageParam[] | undefi
     model: it.model ?? null,
     inputTokens: it.input_tokens ?? 0,
     cacheWriteTokens: it.cache_creation_input_tokens ?? 0,
+    cacheWrite1hTokens: it.cache_creation?.ephemeral_1h_input_tokens ?? 0,
     cacheReadTokens: it.cache_read_input_tokens ?? 0,
     outputTokens: it.output_tokens ?? 0,
   }));
@@ -98,6 +106,14 @@ function reportParams(message: MessageLike, fallbackModel: string): UsageLogPara
     iterations: extractIterations(message),
     inputTokens: message.usage?.input_tokens ?? 0,
     cacheWriteTokens: message.usage?.cache_creation_input_tokens ?? 0,
+    // Subset of cacheWriteTokens actually billed at the 1-hour cache TTL
+    // rate (2x input, vs 1.25x for the default 5-minute rate) — present
+    // only when the caller used an explicit `ttl: "1h"` cache_control
+    // breakpoint. Found via a real dogfooding integration whose
+    // system-prompt/tool-schema caching uses 1h TTL, which this project's
+    // pricing silently flat-rated at the cheaper 5m tier — see
+    // docs/DESIGN.md §4a-cache.
+    cacheWrite1hTokens: message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0,
     cacheReadTokens: message.usage?.cache_read_input_tokens ?? 0,
     outputTokens: message.usage?.output_tokens ?? 0,
   };
@@ -132,6 +148,7 @@ function wrapRawStream(
       let model = fallbackModel;
       let inputTokens = 0;
       let cacheWriteTokens = 0;
+      let cacheWrite1hTokens = 0;
       let cacheReadTokens = 0;
       let outputTokens = 0;
       let webSearchRequests = 0;
@@ -147,6 +164,7 @@ function wrapRawStream(
           usage: {
             input_tokens: inputTokens,
             cache_creation_input_tokens: cacheWriteTokens,
+            cache_creation: { ephemeral_1h_input_tokens: cacheWrite1hTokens },
             cache_read_input_tokens: cacheReadTokens,
             output_tokens: outputTokens,
             server_tool_use: { web_search_requests: webSearchRequests },
@@ -162,6 +180,7 @@ function wrapRawStream(
           model = event.message.model ?? model;
           inputTokens = event.message.usage?.input_tokens ?? inputTokens;
           cacheWriteTokens = event.message.usage?.cache_creation_input_tokens ?? cacheWriteTokens;
+          cacheWrite1hTokens = event.message.usage?.cache_creation?.ephemeral_1h_input_tokens ?? cacheWrite1hTokens;
           cacheReadTokens = event.message.usage?.cache_read_input_tokens ?? cacheReadTokens;
         } else if (event.type === "content_block_start" && (event.content_block?.type === "tool_use" || event.content_block?.type === "server_tool_use") && event.content_block.name) {
           toolsUsed.push(event.content_block.name);

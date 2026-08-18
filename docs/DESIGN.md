@@ -270,6 +270,27 @@ what it is. Note this is distinct from `GET /usage/data`'s existing `by_model` b
 which groups by the one flat top-level `model` column only — it does not yet break out
 iteration-level models; that remains a documented future enhancement, not part of this change.
 
+**`cache_write_1h_tokens`** (§4a-cache — added after launch, optional, `0` for the overwhelming
+majority of calls) — the subset of `cache_write_tokens` actually billed at the 1-hour cache TTL
+rate. Real Anthropic pricing has two cache-write tiers: 1.25x input for the default 5-minute
+`cache_control` breakpoint (what `cache_write_tokens` alone was always priced at) and 2x input for
+an explicit `cache_control: {..., "ttl": "1h"}` breakpoint. This project's pricing model only ever
+knew about the 5-minute rate, so any integrator using 1h TTL caching was silently undercounted —
+found while investigating a real ~$0.29 gap between this project's own tracked spend and the
+actual Anthropic console balance after a dogfooding app (Pragya, which caches its system prompt
+and tool schema at 1h TTL specifically to survive gaps in bursty traffic) had been reporting for
+several days; roughly 55% of that gap was this exact mispricing, confirmed by cross-referencing
+Pragya's own source. The real API's `response.usage.cache_creation` object breaks
+`cache_creation_input_tokens` down by tier — `ephemeral_5m_input_tokens` /
+`ephemeral_1h_input_tokens`, summing to the flat field — so both SDKs extract
+`ephemeral_1h_input_tokens` and forward it as `cache_write_1h_tokens` alongside the existing flat
+`cache_write_tokens`. Server-side, `_estimate_cost()` (§6) splits `cache_write_tokens` into a
+5-minute remainder (`cache_write_tokens - cache_write_1h_tokens`, priced at the existing rate) and
+the 1h portion (priced at `2 * input_rate`), clamping `cache_write_1h_tokens` to `cache_write_tokens`
+so a malformed value can't produce a negative remainder. Persisted as its own column
+(`cache_write_1h_tokens`, `NOT NULL DEFAULT 0`) rather than folded into the existing column, so
+historical rows and the split itself both stay inspectable.
+
 **Ingestion guardrails** (missing from the first pass — staying proportionate to the product:
 no external rate-limiter service, no new dependency, just bounded input):
 - Pydantic field constraints on the request model: `project`/`session_id` capped at a sane
@@ -552,9 +573,10 @@ backwards for a product whose stated audience is "anyone building a Claude API a
   reporting from a context `wrap()` can't see into). Stays available in every SDK; not the
   default-recommended path, but not deprecated either.
 
-**`wrap()`'s seven real edges — the first four found in design review, edges 5–6 only found by
-wiring a real app to a real production server, edge 4a only found by real Advisor-tool traffic
-from the Pragya dogfooding integration — none assumed from a first design pass:**
+**`wrap()`'s eight real edges — the first four found in design review, edges 5–6 only found by
+wiring a real app to a real production server, edges 4a/4b only found by real Pragya dogfooding
+traffic (an Advisor-tool multi-model call for 4a, 1-hour cache TTL writes for 4b) — none assumed
+from a first design pass:**
 
 1. **Patch at the shared choke point — which turned out to be *two* objects, not one.** `wrap()`
    patches `messages.create` and `messages.stream` directly on the client object — on *both*
@@ -630,6 +652,18 @@ from the Pragya dogfooding integration — none assumed from a first design pass
    Absent/`None` for the overwhelming majority of calls (no server-side sub-inference involved),
    in which case the server prices the call exactly as it always has — see §4's cost-calculation
    branch for the server-side half of this fix.
+4b. **`cache_write_1h_tokens` — 1-hour cache TTL writes cost 2x input, not 1.25x.** Found via a
+   real dogfooding integration (Pragya), whose system-prompt and tool-schema caching uses an
+   explicit `cache_control: {..., "ttl": "1h"}` breakpoint. `wrap()` only ever read the flat
+   `cache_creation_input_tokens`, which this project priced at the 5-minute (1.25x input) rate —
+   every 1h-tier cache write was silently undercounted. The real API breaks the flat field down by
+   tier on `message.usage.cache_creation.ephemeral_1h_input_tokens` /
+   `.ephemeral_5m_input_tokens` (summing back to `cache_creation_input_tokens`); `wrap()` now
+   extracts the 1h figure and forwards it as `cache_write_1h_tokens` alongside the existing flat
+   count, and the server splits the two rates instead of flat-pricing every write at 5-minute rate
+   — see §4's `cache_write_1h_tokens` entry for the server-side half of this fix. Absent/`0` for
+   the overwhelming majority of calls (no 1h TTL breakpoint used), in which case pricing is
+   unchanged from before this field existed.
 5. **`tool_runner`'s non-streaming variant calls a *third* method, `.parse()` — not `.create()`
    at all.** Fixing edge 1 (patching `.beta.messages`) still wasn't enough: `BetaAsyncToolRunner`
    /`BetaToolRunner` (what a bare `tool_runner(...)` call returns when `stream` isn't passed —

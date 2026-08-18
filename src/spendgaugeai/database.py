@@ -48,6 +48,7 @@ def init_db() -> None:
                 model               TEXT NOT NULL,
                 input_tokens        INTEGER NOT NULL DEFAULT 0,
                 cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+                cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
                 output_tokens       INTEGER NOT NULL DEFAULT 0,
                 web_search_requests INTEGER NOT NULL DEFAULT 0,
@@ -69,6 +70,19 @@ def init_db() -> None:
         # Advisor/fallback/compaction sub-inference) from "explicitly empty".
         try:
             conn.execute("ALTER TABLE usage_logs ADD COLUMN iterations TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+        # Same additive-migration pattern as `iterations` above, for existing
+        # installs predating the 1-hour cache TTL pricing fix (docs/DESIGN.md
+        # §4a-cache) — real Anthropic cache writes cost 1.25x input for the
+        # default 5-minute TTL but 2x for an explicit ttl: "1h" breakpoint;
+        # this column tracks how much of cache_write_tokens was actually the
+        # pricier 1h tier so _estimate_cost() can split the two rates instead
+        # of flat-pricing every cache write at the 5-minute rate.
+        try:
+            conn.execute("ALTER TABLE usage_logs ADD COLUMN cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
@@ -177,15 +191,27 @@ def _lookup_pricing(model: str) -> dict | None:
     return None
 
 
-def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, web_search_requests: int = 0) -> float:
-    """Estimate cost in USD based on token counts, model pricing, and server-tool fees."""
+def _estimate_cost(model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, web_search_requests: int = 0, cache_write_1h: int = 0) -> float:
+    """Estimate cost in USD based on token counts, model pricing, and server-tool fees.
+
+    cache_write_1h is the subset of cache_write actually billed at the 1-hour
+    cache TTL rate — real Anthropic pricing is 1.25x input for the default
+    5-minute cache_control breakpoint (what p["cache_write"] already prices)
+    but 2x input for an explicit `ttl: "1h"` breakpoint. Found via a real
+    dogfooding integration (Pragya) that caches its system prompt and tool
+    schema at 1h TTL: every cache write it made was silently underpriced at
+    the 5-minute rate. Clamped so a malformed cache_write_1h can't exceed
+    cache_write and produce a negative 5-minute remainder."""
     p = _lookup_pricing(model)
     if p is None:
         print(f"[cost] WARNING: no _PRICING entry for model '{model}' — falling back to claude-sonnet-4-6 rates. Add a real entry in database.py._PRICING.")
         p = _PRICING["claude-sonnet-4-6"]
+    cache_write_1h = min(max(cache_write_1h, 0), cache_write)
+    cache_write_5m = cache_write - cache_write_1h
     return (
         input_tokens      / 1000 * p["input"] +
-        cache_write       / 1000 * p["cache_write"] +
+        cache_write_5m    / 1000 * p["cache_write"] +
+        cache_write_1h    / 1000 * (2 * p["input"]) +
         cache_read        / 1000 * p["cache_read"] +
         output_tokens     / 1000 * p["output"] +
         web_search_requests * _WEB_SEARCH_COST_PER_USE
@@ -208,6 +234,7 @@ def _estimate_cost_from_iterations(fallback_model: str, iterations: list[dict], 
             it.get("input_tokens", 0), it.get("cache_write_tokens", 0),
             it.get("cache_read_tokens", 0), it.get("output_tokens", 0),
             web_search_requests=0,
+            cache_write_1h=it.get("cache_write_1h_tokens", 0),
         )
         for it in iterations
     )
@@ -216,7 +243,7 @@ def _estimate_cost_from_iterations(fallback_model: str, iterations: list[dict], 
 
 # ── Usage Logs ────────────────────────────────────────────────────────────────
 
-def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "default", web_search_requests: int = 0, iterations: list[dict] | None = None) -> float:
+def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, cache_read: int, output_tokens: int, tools: list[str] | None = None, project: str = "default", web_search_requests: int = 0, iterations: list[dict] | None = None, cache_write_1h: int = 0) -> float:
     """Save token usage for one request. Returns the estimated cost in USD.
 
     When `iterations` is supplied and non-empty (a response that included at
@@ -230,15 +257,15 @@ def usage_log(session_id: str, model: str, input_tokens: int, cache_write: int, 
     if iterations:
         cost = _estimate_cost_from_iterations(model, iterations, web_search_requests)
     else:
-        cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests)
+        cost = _estimate_cost(model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cache_write_1h=cache_write_1h)
     with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO usage_logs
-              (project, session_id, model, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, web_search_requests, estimated_cost_usd, tools_used, iterations, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (project, session_id, model, input_tokens, cache_write_tokens, cache_write_1h_tokens, cache_read_tokens, output_tokens, web_search_requests, estimated_cost_usd, tools_used, iterations, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (project, session_id, model, input_tokens, cache_write, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), json.dumps(iterations) if iterations else None, datetime.now().isoformat()),
+            (project, session_id, model, input_tokens, cache_write, cache_write_1h, cache_read, output_tokens, web_search_requests, cost, json.dumps(tools or []), json.dumps(iterations) if iterations else None, datetime.now().isoformat()),
         )
         # Pricing-warning fan-out: every distinct unpriced model gets its own
         # warning row, not just the top-level `model` — an Advisor iteration

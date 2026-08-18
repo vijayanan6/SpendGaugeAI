@@ -23,6 +23,7 @@ export interface IterationUsageParam {
   model?: string | null;
   inputTokens?: number;
   cacheWriteTokens?: number;
+  cacheWrite1hTokens?: number;
   cacheReadTokens?: number;
   outputTokens?: number;
 }
@@ -31,6 +32,11 @@ export interface UsageLogParams {
   model: string;
   inputTokens?: number;
   cacheWriteTokens?: number;
+  /** Subset of cacheWriteTokens actually billed at the 1-hour cache TTL rate
+   * (2x input, vs 1.25x for the default 5-minute rate) — present only when
+   * an explicit `ttl: "1h"` cache_control breakpoint was used. See
+   * docs/DESIGN.md §4a-cache. */
+  cacheWrite1hTokens?: number;
   cacheReadTokens?: number;
   outputTokens?: number;
   webSearchRequests?: number;
@@ -121,6 +127,7 @@ export class SpendGaugeAIClient {
       model: params.model,
       input_tokens: params.inputTokens ?? 0,
       cache_write_tokens: params.cacheWriteTokens ?? 0,
+      cache_write_1h_tokens: params.cacheWrite1hTokens ?? 0,
       cache_read_tokens: params.cacheReadTokens ?? 0,
       output_tokens: params.outputTokens ?? 0,
       web_search_requests: params.webSearchRequests ?? 0,
@@ -130,6 +137,7 @@ export class SpendGaugeAIClient {
         model: it.model ?? null,
         input_tokens: it.inputTokens ?? 0,
         cache_write_tokens: it.cacheWriteTokens ?? 0,
+        cache_write_1h_tokens: it.cacheWrite1hTokens ?? 0,
         cache_read_tokens: it.cacheReadTokens ?? 0,
         output_tokens: it.outputTokens ?? 0,
       })),

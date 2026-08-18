@@ -116,6 +116,39 @@ def test_sync_create_reports_normally(captured):
     assert captured[0]["web_search_requests"] == 2
 
 
+def test_sync_create_reports_1h_cache_write_tokens(captured):
+    # The actual bug fix: usage.cache_creation.ephemeral_1h_input_tokens (only
+    # present when the caller used an explicit ttl: "1h" cache_control
+    # breakpoint) must be extracted and forwarded so the server can price it
+    # at the 1-hour rate instead of flat-rating every cache write at the
+    # cheaper 5-minute rate — see docs/DESIGN.md §4a-cache.
+    message = _fake_message(
+        usage=SimpleNamespace(
+            input_tokens=100, output_tokens=50,
+            cache_creation_input_tokens=250, cache_read_input_tokens=20,
+            cache_creation=SimpleNamespace(ephemeral_5m_input_tokens=50, ephemeral_1h_input_tokens=200),
+            server_tool_use=SimpleNamespace(web_search_requests=2),
+        ),
+    )
+    fake_client = _FakeClient(create_fn=lambda *a, **k: message)
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert captured[0]["cache_write_tokens"] == 250
+    assert captured[0]["cache_write_1h_tokens"] == 200
+
+
+def test_sync_create_cache_write_1h_defaults_to_zero_when_absent(captured):
+    # Backward-compat: a response with no cache_creation attribute at all
+    # (the overwhelming majority of calls — no 1h TTL breakpoint used) must
+    # report 0, not crash on the missing attribute.
+    fake_client = _FakeClient(create_fn=lambda *a, **k: _fake_message())
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    wrapped.messages.create(model="claude-sonnet-4-6")
+    assert captured[0]["cache_write_1h_tokens"] == 0
+
+
 def test_sync_create_with_stream_true_reports_real_usage_not_zero(captured):
     # Regression: create(stream=True) returns a raw event iterator, not a
     # populated Message — reading .usage/.content directly off it (as the
@@ -134,6 +167,32 @@ def test_sync_create_with_stream_true_reports_real_usage_not_zero(captured):
     assert captured[0]["cache_read_tokens"] == 20
     assert captured[0]["web_search_requests"] == 2
     assert captured[0]["tools_used"] == ["search_docs"]
+
+
+def test_sync_create_stream_true_reports_1h_cache_write_tokens(captured):
+    # Same fix as the non-streaming case, but for the raw stream(=True) path,
+    # which extracts usage fields from message_start rather than a Message
+    # object — a genuinely separate code path that needed its own fix.
+    events = [
+        SimpleNamespace(
+            type="message_start",
+            message=SimpleNamespace(
+                model="claude-sonnet-4-6",
+                usage=SimpleNamespace(
+                    input_tokens=100, cache_creation_input_tokens=250, cache_read_input_tokens=20,
+                    cache_creation=SimpleNamespace(ephemeral_5m_input_tokens=50, ephemeral_1h_input_tokens=200),
+                ),
+            ),
+        ),
+        SimpleNamespace(type="message_delta", usage=SimpleNamespace(output_tokens=50, server_tool_use=SimpleNamespace(web_search_requests=0))),
+        SimpleNamespace(type="message_stop"),
+    ]
+    fake_client = _FakeClient(create_fn=lambda *a, **k: iter(events))
+    wrapped = wrap(fake_client, base_url="http://localhost:8000", api_key="k")
+
+    list(wrapped.messages.create(model="claude-sonnet-4-6", stream=True))
+    assert captured[0]["cache_write_tokens"] == 250
+    assert captured[0]["cache_write_1h_tokens"] == 200
 
 
 def test_sync_create_with_stream_true_reports_even_on_early_break(captured):
@@ -228,9 +287,9 @@ def test_sync_create_reports_iterations_breakdown(captured):
     wrapped.messages.create(model="claude-haiku-4-5")
     assert captured[0]["iterations"] == [
         {"type": "message", "model": "claude-haiku-4-5", "input_tokens": 900,
-         "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 500},
+         "cache_write_tokens": 0, "cache_write_1h_tokens": 0, "cache_read_tokens": 0, "output_tokens": 500},
         {"type": "advisor_message", "model": "claude-opus-4-8", "input_tokens": 300,
-         "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 200},
+         "cache_write_tokens": 0, "cache_write_1h_tokens": 0, "cache_read_tokens": 0, "output_tokens": 200},
     ]
 
 

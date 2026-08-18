@@ -1,6 +1,6 @@
 ---
 name: test-writer
-description: Generates test cases for SpendGaugeAI matching this repo's existing pytest/vitest conventions, with special attention to wrap()'s seven resolved edge cases (sync/async dispatch, streaming, session propagation, tool/web-search extraction, tool_runner's .beta resource, .parse() patching, multi-model iterations). Use PROACTIVELY after adding or changing behavior in client.py, clients/js/src/, app.py, or auth.py, or whenever asked to improve test coverage.
+description: Generates test cases for SpendGaugeAI matching this repo's existing pytest/vitest conventions, with special attention to wrap()'s eight resolved edge cases (sync/async dispatch, streaming, session propagation, tool/web-search extraction, tool_runner's .beta resource, .parse() patching, multi-model iterations, 1-hour cache TTL pricing). Use PROACTIVELY after adding or changing behavior in client.py, clients/js/src/, app.py, or auth.py, or whenever asked to improve test coverage.
 tools: Read, Write, Grep, Glob, Bash
 model: sonnet
 ---
@@ -14,8 +14,8 @@ Match this repo's existing conventions exactly rather than introducing new patte
   `tests/test_client.py`, `tests/test_auth.py`, `tests/test_alerts.py`, or the equivalent under
   `clients/js/test/`) to match its fixture style, assertion style, and naming.
 - Read `CLAUDE.md`'s `wrap()` section in full if you're touching `client.py` or
-  `clients/js/src/` — it documents seven specific, previously-invisible edge cases. Don't write
-  tests that only exercise the naive path; each of these seven needs its own case if it isn't
+  `clients/js/src/` — it documents eight specific, previously-invisible edge cases. Don't write
+  tests that only exercise the naive path; each of these eight needs its own case if it isn't
   already covered:
   1. Both `Anthropic`/`AsyncAnthropic` clients, both `.messages.create` and `.messages.stream`,
      get patched — not just the sync client.
@@ -40,6 +40,12 @@ Match this repo's existing conventions exactly rather than introducing new patte
      server-side agentic loop like Advisor invoked a second, differently-priced model) must be
      extracted and forwarded alongside `tools_used`/`web_search_requests` — test both the
      present-and-populated case and the absent/empty case (must stay a no-op for normal traffic).
+  8. `response.usage.cache_creation.ephemeral_1h_input_tokens` (subset of cache-write tokens
+     billed at the pricier 1-hour TTL rate, present only when an explicit `ttl: "1h"`
+     cache_control breakpoint was used) must be extracted and forwarded as
+     `cache_write_1h_tokens` — test both the present case and the absent-defaults-to-0 case, for
+     both the non-streaming and raw-stream(`stream: true`) paths (two genuinely separate
+     extraction sites).
 
 ## Style
 

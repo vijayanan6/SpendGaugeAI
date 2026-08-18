@@ -46,8 +46,8 @@ describe("SpendGaugeAIClient.log", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.iterations).toEqual([
-      { type: "message", model: "claude-haiku-4-5", input_tokens: 900, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 500 },
-      { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 200 },
+      { type: "message", model: "claude-haiku-4-5", input_tokens: 900, cache_write_tokens: 0, cache_write_1h_tokens: 0, cache_read_tokens: 0, output_tokens: 500 },
+      { type: "advisor_message", model: "claude-opus-4-8", input_tokens: 300, cache_write_tokens: 0, cache_write_1h_tokens: 0, cache_read_tokens: 0, output_tokens: 200 },
     ]);
   });
 
