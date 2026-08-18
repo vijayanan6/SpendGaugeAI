@@ -146,6 +146,13 @@ await spendgauge.spendgaugeSession({ sessionId: "abc123", project: "my-app" }, a
 });
 ```
 
+## Verify it's actually reporting
+
+A correct Claude response is not proof `wrap()` is reporting anything — reporting fails silently
+by design. Don't just trust it's wired up; check the
+[main README's verification steps](../../README.md#verify-your-integration-is-actually-reporting)
+after your first real call, especially if you're on `tool_runner`.
+
 ## Design
 
 Full integration design (including all seven resolved `wrap()` edge cases — two, covering

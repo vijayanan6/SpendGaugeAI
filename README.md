@@ -206,6 +206,33 @@ for the server at all. Node is only relevant if you're **integrating a JS/TS app
 the `spendgaugeai-client` npm package over a raw `fetch()` call — that's a separate, optional
 package for API consumers, unrelated to running the server itself.
 
+## Verify your integration is actually reporting
+
+**A correct Claude reply is not proof SpendGaugeAI received anything.** Reporting is deliberately
+fail-silent — a SpendGaugeAI outage must never break your app — which means a broken integration
+looks identical to a working one from your app's point of view. This isn't hypothetical: it
+happened during this project's own dogfooding. The very first real message through a real app got
+a perfectly correct Claude response, but nothing showed up on the dashboard, because `wrap()` only
+patched `client.messages` and never the separate `client.beta.messages` object that
+`client.beta.messages.tool_runner` actually lives on — every fake-client test had happened to mask
+it. Fixed (both SDKs, regression-tested — see `docs/DESIGN.md` §8a for the full story), but the
+lesson generalizes to any integration: don't just trust that `wrap()` is called, confirm it's
+actually landing.
+
+After your first real call, check that it registered:
+
+```bash
+curl -u spendgaugeai:$SPENDGAUGEAI_API_KEY "http://localhost:8000/usage/data?project=my-app"
+```
+
+`totals.total_requests` should be non-zero for your project. If it's still `0`:
+- Is `wrap()` called on the *exact* client instance your call sites actually use — not a second
+  `Anthropic()`/`AsyncAnthropic()` instance constructed somewhere else in the app (a background
+  job, a different module) that never got wrapped? `wrap()` patches one instance in place; it does
+  not retroactively cover other instances.
+- Are `base_url`/`api_key` actually pointing at this running server?
+- If you're on an older pinned version, are you past the `tool_runner` fix above?
+
 ## Developing the dashboard
 
 The dashboard lives in `src/spendgaugeai/templates/` (Jinja2) and `src/spendgaugeai/static/`
