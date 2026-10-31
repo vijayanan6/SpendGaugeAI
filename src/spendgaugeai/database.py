@@ -154,10 +154,25 @@ _PRICING = {
     "claude-haiku-4-5": {
         "input": 0.001, "cache_write": 0.00125, "cache_read": 0.0001, "output": 0.005
     },
+    "claude-haiku-5-5": {
+        # $0.10/$0.50 per MTok for prompts up to 100K tokens (verified 2026-10-30 on
+        # Anthropic's pricing page). Prompts OVER 100K tokens bill at $0.50/$2.50
+        # (cache write $0.625, read $0.05) — a tier this flat table cannot express,
+        # so such a call is UNDERcounted 5x. Pragya's prompts are far under 100K.
+        "input": 0.0001, "cache_write": 0.000125, "cache_read": 0.00001, "output": 0.0005
+    },
+    "claude-sonnet-5-5": {
+        # $2/$10 per MTok; cache reads cut to $0.10 on 2026-10-07.
+        "input": 0.002, "cache_write": 0.0025, "cache_read": 0.0001, "output": 0.010
+    },
+    "claude-opus-5-5": {
+        # $4/$20 per MTok, cache reads $0.20.
+        "input": 0.004, "cache_write": 0.005, "cache_read": 0.0002, "output": 0.020
+    },
     "claude-sonnet-5": {
-        # Introductory pricing through 2026-08-31 ($2/$10 per MTok). Reverts to
-        # $3/$15 (same as claude-sonnet-4-6, below) after that date — update this
-        # entry then.
+        # $2/$10 per MTok. Was introductory pricing with a planned revert to $3/$15
+        # after 2026-08-31; Anthropic made $2/$10 permanent on 2026-08-10, so no
+        # change is due.
         "input": 0.002, "cache_write": 0.0025, "cache_read": 0.0002, "output": 0.010
     },
     "claude-sonnet-4-6": {
