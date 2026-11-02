@@ -8,7 +8,7 @@ services:
         # interception machines only).
         INSECURE_SSL_DOWNLOADS: ${INSECURE_SSL_DOWNLOADS:-}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # loopback only; Pragya reaches it via host.docker.internal
     environment:
       SPENDGAUGEAI_API_KEY: ${SPENDGAUGEAI_API_KEY:-}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
